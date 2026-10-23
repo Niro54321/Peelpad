@@ -103,7 +103,7 @@ class Paper(QWidget):
         self.frames.timeout.connect(self._next_frame)
 
     def _next_frame(self) -> None:
-        if self.isVisible():
+        if self.isVisible() and getattr(self, "wind", 0) == 0:     # while it blows, the wind redraws it
             self.update(self.paper_rect().toAlignedRect())
 
     def paper_rect(self) -> QRectF:
@@ -245,7 +245,7 @@ class NoteWindow(Paper):
         self.wind_clock = QElapsedTimer()
         self.wind_clock.start()
         self.wind_timer = QTimer(self)
-        self.wind_timer.setInterval(40)
+        self.wind_timer.setInterval(50)
         self.wind_timer.timeout.connect(self._blow)
         self._writing_key = self._masks_key = self._front_key = None
         self._writing_img = self._masks = self._front_img = None
@@ -337,7 +337,7 @@ class NoteWindow(Paper):
         grow = max(0.0, (MARGIN - 4) * 2 / max(r.width(), r.height()))
         shape = physics.wind(r.width(), r.height(), r.height() * GLUE / TEMPLATE, t, speed, self.wind_seed, grow)
         painted = Painted(shape, dpr)
-        paint_bands(p, painted, front, front, QPointF(-r.left(), -r.top()), self._masks)
+        paint_bands(p, painted, front, front, QPointF(-r.left(), -r.top()), self._masks, shadow=0)
         p.resetTransform()
 
     # painting
