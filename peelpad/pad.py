@@ -89,16 +89,17 @@ class Pad(Paper):
         r = self.paper_rect()
         top = self.note["color"]
         img, shadow = self._layer(top)
-        p.drawImage(QPointF(r.left() - MARGIN, r.top() - MARGIN + BLOCK), shadow)
-        # the sheets under the top one, their edges showing as the pad's side
         shaped = self.skin().aspect is not None or self.skin().animated
-        for i in range(LAYERS, 0, -1):
+        p.drawImage(QPointF(r.left() - MARGIN, r.top() - MARGIN + (0 if shaped else BLOCK)), shadow)
+        # the sheets under the top one, their edges showing as the pad's side
+        # (a shaped skin has no straight edge to stack, so it gets only its soft shadow)
+        shaped = self.skin().aspect is not None or self.skin().animated
+        for i in range(0 if shaped else LAYERS, 0, -1):
             layer, _ = self._layer((top + i) % 4, i)
             y = r.top() + BLOCK * i / LAYERS
             p.drawImage(QPointF(r.left(), y), layer)
-            if not shaped:
-                p.setPen(QPen(QColor(0, 0, 0, 30), 0.7))
-                p.drawLine(QPointF(r.left() + 1, y + r.height() - 0.4), QPointF(r.right() - 1, y + r.height() - 0.4))
+            p.setPen(QPen(QColor(0, 0, 0, 30), 0.7))
+            p.drawLine(QPointF(r.left() + 1, y + r.height() - 0.4), QPointF(r.right() - 1, y + r.height() - 0.4))
         if self.peeling:
             under, _ = self._layer((top + 1) % 4)
             p.drawImage(r.topLeft(), under)
