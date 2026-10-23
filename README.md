@@ -69,18 +69,23 @@ checkerboard painted in. Peelpad spots that and makes it truly see-through.
 area marked. Paint over it in any editor, then upload it.
 
 **Animated skins.** Upload an animated GIF, APNG or WebP and it plays on every
-note, looping. Peelpad comes with seven, drawn in code so they stay sharp at
+note, looping. Peelpad comes with nine, drawn in code so they stay sharp at
 any size, and the writing in the middle never moves:
 
-- *Retro LED clock*: seven-segment time, seconds and date in the colour you
-  pick, a ring of LEDs that fills every minute and a pixel bar that grows each
-  minute of the hour
+- *Weather (live)*: the sky over your city, changing by itself: sun, soft 3D
+  clouds, rain, snow, thunderstorms with lightning, fog, or the moon and stars
+  at night. Type your city in Settings → Look (you can also preview each weather)
+- *Retro LED clock*: seven-segment date and time in the colour you pick, a ring
+  of LEDs that fills every minute and a pixel bar that grows each minute of the hour
+- *Arcade*: a little yellow chomper runs round a neon maze eating the dots,
+  the score ticking up; the dots come back every lap
 - *Skull parade*: a little skull runs along the bottom, a bat flaps, stars twinkle
 - *Apple worm*: a worm crawls round a black frame eating the apples (they grow back)
 - *Aquarium*: two fish swim round a frosted card, bubbles rise, seaweed sways
 - *Night sky*: twinkling stars, a glowing moon, a shooting star now and then, drifting clouds
 - *Rainy window*: drops run down the glass while a cat sleeps on the sill
 - *Synthwave*: a striped sun sets behind palms over an endless neon grid
+
 Settings → Look → **Copy a prompt for an animated skin** gives you a ready
 brief to paste into an AI animation tool (or send to an artist). It is also in
 [docs/animated-skin-prompt.md](docs/animated-skin-prompt.md).
@@ -151,8 +156,11 @@ Peelpad checks the real mouse button every frame, so a sheet can never be left
 hanging on the screen.
 
 Your notes are kept in `%APPDATA%\Peelpad\notes.json`, and uploaded skins in
-`%APPDATA%\Peelpad\skins`. They stay on your PC. Peelpad has no account and
-sends nothing anywhere, so each person who installs it has only their own notes.
+`%APPDATA%\Peelpad\skins`. They stay on your PC. Peelpad has no account, so
+each person who installs it has only their own notes. The one thing it ever
+sends is the city you type for the Weather look, to
+[Open-Meteo](https://open-meteo.com/) (free, no account), and only while that
+look is in use.
 
 ## Licence
 

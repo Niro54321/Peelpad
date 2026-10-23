@@ -12,11 +12,12 @@ from pathlib import Path
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QFileDialog, QFontComboBox, QGridLayout,
-                               QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
+                               QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
                                QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
 from peelpad.skins import (GLUE, NEON, SIDE, TEMPLATE, all_skins, hand_family, import_skin, preview,
                            save_template)
+from peelpad.weather import PREVIEWS
 from peelpad.widgets import GlassWindow, Segmented, SliderRow, label
 
 WEEKS = 18
@@ -511,6 +512,27 @@ class Settings(GlassWindow):
         col.addLayout(self.clock_grid)
         self.fill_clock()
 
+        col.addWidget(label("Weather (for the Weather look)", bold=True))
+        row = QHBoxLayout()
+        self.city = QLineEdit(self.app.store.data["weather"].get("city", ""))
+        self.city.setPlaceholderText("Your city, e.g. Casablanca")
+        self.city.returnPressed.connect(lambda: self.app.set_weather_city(self.city.text()))
+        set_city = QPushButton("Set")
+        set_city.clicked.connect(lambda: self.app.set_weather_city(self.city.text()))
+        row.addWidget(self.city, 1)
+        row.addWidget(set_city)
+        col.addLayout(row)
+        self.weather_status = label("", muted=True, size=12)
+        col.addWidget(self.weather_status)
+        self.weather_preview = Segmented(PREVIEWS, self.app.store.data["weather"].get("preview", "live"))
+        self.weather_preview.changed.connect(self.app.set_weather_preview)
+        col.addWidget(self.weather_preview)
+        col.addWidget(label("Live follows the sky over your city and changes by itself. The others show that "
+                            "weather so you can see it. Only the city goes to Open-Meteo (open-meteo.com), every "
+                            "20 minutes while you use this look; your notes never leave your PC.",
+                            muted=True, size=12))
+        self.fill_weather()
+
         col.addWidget(label("Text box", bold=True))
         col.addWidget(label("Where the writing goes on this look. Drag the box to move it, drag its corners to "
                             "make it bigger or smaller. Peelpad finds the calm middle of your own pictures by itself.",
@@ -654,6 +676,24 @@ class Settings(GlassWindow):
         self.remove_button.setVisible(any(self.app.skins_dir.glob("*.*")))
         self.area_editor.set_skin(self.app.skin)
         self.frame.style_children()
+
+    def fill_weather(self) -> None:
+        import time as clock
+
+        from peelpad import weather
+
+        w = self.app.store.data["weather"]
+        if getattr(self.app, "weather_note", ""):
+            text = self.app.weather_note
+        elif not w.get("city"):
+            text = "Type your city and press Set."
+        elif weather.Now.updated:
+            temp = f"{round(weather.Now.temp)}°, " if weather.Now.temp is not None else ""
+            text = (f"{w['city']}: {temp}{weather.LABELS[weather.Now.state].lower()}"
+                    f"{'' if weather.Now.day else ' (night)'} · checked {clock.strftime('%H:%M', clock.localtime(weather.Now.updated))}")
+        else:
+            text = f"{w['city']}: the weather shows once the Weather look is in use."
+        self.weather_status.setText(text)
 
     CLOCK = ["#FF2B2B", "#FF8A1F", "#FFD447", "#3DFF6E", "#22E3FF", "#3D7BFF", "#B26BFF", "#FF4FD8", "#F2F2F2"]
 
@@ -892,7 +932,8 @@ class Settings(GlassWindow):
             "drag the handles, then ✓. Or Ctrl + mouse wheel.<br>"
             "• Check off every task and the note crumples away. ✓ finishes it by hand, ✕ throws it away.<br>"
             "• – minimises the pad to the taskbar. Peelpad also lives in the tray: right-click it to quit.<br>"
-            "• Everything you write stays on this PC only, in the data folder above. Nothing is sent anywhere.",
+            "• Everything you write stays on this PC only, in the data folder above. The only thing Peelpad ever "
+            "sends is your city, to Open-Meteo, and only while you use the Weather look.",
             size=12)
         help_text.setTextFormat(Qt.TextFormat.RichText)
         col.addWidget(help_text)

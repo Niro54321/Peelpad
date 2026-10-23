@@ -58,7 +58,8 @@ DEFAULTS = {"version": 1, "skin": "neon", "notes": [], "days": [],
             "checked_skins": [],        # skins already checked for a painted-in checkerboard
             "wind": True,               # pinned notes sway in the wind
             "wind_speed": 3.6,          # m/s, up to 7.2
-            "clock_color": "#FF2B2B"}   # the Retro LED clock's digits
+            "clock_color": "#FF2B2B",   # the Retro LED clock's digits
+            "weather": {"city": "", "lat": None, "lon": None, "preview": "live"}}   # the Weather look
 
 
 class Store:
@@ -71,6 +72,7 @@ class Store:
                 self.data.update(loaded)
                 self.data["pad"] = DEFAULTS["pad"] | loaded.get("pad", {})
                 self.data["mine"] = DEFAULTS["mine"] | loaded.get("mine", {})
+                self.data["weather"] = DEFAULTS["weather"] | loaded.get("weather", {})
         except (OSError, ValueError):
             pass
         if not self.data["pad"].get("draft"):

@@ -529,3 +529,59 @@ def test_the_five_scenes_keep_the_writing_calm():
         assert skins.skin_for("anim:clock", Path(".")).frame_id() % 1000 == QColor("#3DFF6E").rgb() % 1000
     finally:
         LED.color = before
+
+
+def test_weather_codes_and_previews():
+    from peelpad import weather
+
+    assert [weather.state_for(c) for c in (0, 2, 3, 45, 61, 81, 73, 95)] == \
+        ["clear", "partly", "cloudy", "fog", "rain", "rain", "snow", "storm"]
+    before = weather.Now.preview
+    try:
+        weather.Now.preview = "night"
+        assert weather.shown() == ("clear", False)
+        weather.Now.preview = "rain"
+        assert weather.shown() == ("rain", True)
+        weather.Now.preview, weather.Now.updated, weather.Now.state, weather.Now.day = "live", 1.0, "snow", True
+        assert weather.shown() == ("snow", True)
+    finally:
+        weather.Now.preview, weather.Now.updated = before, 0.0
+
+
+def test_weather_look_changes_with_the_sky():
+    from peelpad import weather
+    from peelpad.scenes import WeatherSky
+
+    sky = WeatherSky()
+
+    def frame(state):
+        weather.Now.preview = state
+        img = QImage(200, 200, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        p = QPainter(img)
+        sky.paint_front(p, 200, 200, 0, t=2.0)
+        p.end()
+        return img
+    try:
+        sunny, rainy = frame("clear"), frame("rain")
+        assert sunny.pixelColor(20, 150) != rainy.pixelColor(20, 150)
+    finally:
+        weather.Now.preview = "live"
+
+
+def test_arcade_chomper_eats_the_dots_and_they_come_back():
+    from peelpad.scenes import Arcade
+
+    arc = Arcade()
+
+    def lit_dots(t):
+        img = QImage(240, 240, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        p = QPainter(img)
+        arc.paint_front(p, 240, 240, 0, t=t)
+        p.end()
+        lane = arc._lane(240, 240)
+        return sum(img.pixelColor(lane.pointAtPercent((i + 0.5) / arc.PELLETS).toPoint()).red() > 200
+                   for i in range(arc.PELLETS))
+    early, late, next_lap = lit_dots(0.5), lit_dots(arc.LOOP * 0.8), lit_dots(arc.LOOP * 1.05)
+    assert early > late and next_lap > late

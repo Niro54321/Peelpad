@@ -42,6 +42,7 @@ class App(QObject):
         self.save_timer.timeout.connect(self.store.save)
         self.settings = None
         self.windows: dict[str, NoteWindow] = {}
+        self._weather_setup()
 
         from peelpad.pad import Pad
         self.pad = Pad(self)
@@ -162,6 +163,8 @@ class App(QObject):
     def set_skin(self, key: str) -> None:
         self.skin = skin_for(key, self.skins_dir, self.store.data["mine"], self.store.data["areas"])
         self.store.data["skin"] = self.skin.key
+        if self.skin.key == "anim:weather":
+            self.refresh_weather()
         self.pad.resize_for_skin()
         for win in self.windows.values():
             win.refresh_look()
@@ -201,6 +204,75 @@ class App(QObject):
         if key == self.skin.key:
             self.set_skin(key)
         self.changed()
+
+    # ---------------------------------------------------------------- the Weather look
+    WEATHER_EVERY = 20 * 60 * 1000          # ms between looks at the sky
+
+    def _weather_setup(self) -> None:
+        from peelpad import weather
+
+        w = self.store.data["weather"]
+        weather.Now.preview = w.get("preview", "live")
+        weather.Now.place = w.get("city", "")
+        self.fetcher = weather.Fetcher(self)
+        self.fetcher.found.connect(self._weather_found)
+        self.fetcher.updated.connect(self._weather_updated)
+        self.fetcher.failed.connect(self._weather_failed)
+        self.weather_timer = QTimer(self)
+        self.weather_timer.setInterval(self.WEATHER_EVERY)
+        self.weather_timer.timeout.connect(self.refresh_weather)
+        self.weather_timer.start()
+        self.weather_note = ""
+        QTimer.singleShot(1500, self.refresh_weather)
+
+    def refresh_weather(self) -> None:
+        """Ask for the weather, but only while the Weather look is in use and a city is set."""
+        w = self.store.data["weather"]
+        if self.skin.key == "anim:weather" and w.get("lat") is not None:
+            self.fetcher.refresh(w["lat"], w["lon"])
+
+    def set_weather_city(self, city: str) -> None:
+        if city.strip():
+            self.weather_note = "Looking for it…"
+            self.fetcher.find(city)
+            if self.settings:
+                self.settings.fill_weather()
+
+    def set_weather_preview(self, key: str) -> None:
+        from peelpad import weather
+
+        self.store.data["weather"]["preview"] = weather.Now.preview = key
+        self.changed()
+
+    def _weather_found(self, place) -> None:
+        from peelpad import weather
+
+        if place is None:
+            self.weather_note = "Couldn't find that city. Try its English name."
+        else:
+            w = self.store.data["weather"]
+            w.update(city=place["city"], lat=place["lat"], lon=place["lon"])
+            weather.Now.place = place["city"]
+            self.weather_note = ""
+            self.changed()
+        if self.settings:
+            self.settings.fill_weather()
+
+    def _weather_updated(self, now: dict) -> None:
+        import time
+
+        from peelpad import weather
+
+        weather.Now.state, weather.Now.day, weather.Now.temp = now["state"], now["day"], now["temp"]
+        weather.Now.updated = time.time()
+        self.weather_note = ""
+        if self.settings:
+            self.settings.fill_weather()
+
+    def _weather_failed(self, why: str) -> None:
+        self.weather_note = "Couldn't reach the weather service (no internet?). Peelpad tries again later."
+        if self.settings:
+            self.settings.fill_weather()
 
     def set_clock_color(self, color: str) -> None:
         self.store.data["clock_color"] = color

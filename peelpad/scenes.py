@@ -1,6 +1,6 @@
 """Five more animated looks, drawn in code so they are sharp at any size:
 
-- Retro LED clock: seven-segment time and date in the colour you pick, a ring of
+- Retro LED clock: seven-segment date and time in the colour you pick, a ring of
   LED dots that fills every minute and a pixel bar that grows each minute of the hour
 - Aquarium: two fish swim round a frosted card, bubbles rise, seaweed sways
 - Night sky: stars twinkle, the moon glows, a shooting star now and then, clouds drift
@@ -18,7 +18,8 @@ import random
 from datetime import datetime
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF, QRadialGradient
+from PySide6.QtGui import (QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF,
+                           QRadialGradient)
 
 from peelpad.animated import Backdrop, now_ms
 from peelpad.effects import hue_shift
@@ -160,10 +161,10 @@ def seven_segment(p: QPainter, rect: QRectF, text: str, on: QColor, off: QColor,
 class LedClock(Scene):
     key = "anim:clock"
     name = "Retro LED clock (animated)"
-    frame_ms = 250
+    frame_ms = 500
     card_color = QColor("#0B0B0F")
     ink_color = QColor("#ECECF2")
-    AREA = (0.12, 0.12, 0.88, 0.58)
+    AREA = (0.12, 0.12, 0.88, 0.74)
     DOTS = 60
 
     def frame_id(self) -> int:
@@ -212,21 +213,13 @@ class LedClock(Scene):
             else:
                 p.setBrush(off)
             p.drawEllipse(pt, r, r)
-        # the time, big, with the seconds smaller beside it
-        colon = ":" if now.microsecond < 500_000 else " "
-        big = QRectF(w * 0.13, h * 0.62, w * 0.58, h * 0.17)
-        seven_segment(p, big, f"{now.hour:02d}{colon}{now.minute:02d}", on, off)
-        seven_segment(p, QRectF(w * 0.73, h * 0.68, w * 0.15, h * 0.11), f"{now.second:02d}", second_color, second_off)
-        # the date, and the day in small letters
-        seven_segment(p, QRectF(w * 0.13, h * 0.81, w * 0.42, h * 0.065), now.strftime("%d-%m-%y"),
+        # one row under the writing: the date, and the time beside it (its colon stays put;
+        # the ring already counts the seconds)
+        row_top, row_h = h * 0.79, h * 0.075
+        seven_segment(p, QRectF(w * 0.13, row_top, w * 0.42, row_h), now.strftime("%d-%m-%y"),
                       second_color, second_off)
-        f = QFont("Consolas")
-        f.setPixelSize(max(7, round(h * 0.05)))
-        f.setBold(True)
-        p.setFont(f)
-        p.setPen(second_color)
-        p.drawText(QRectF(w * 0.58, h * 0.8, w * 0.3, h * 0.075), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                   now.strftime("%a").upper())
+        seven_segment(p, QRectF(w * 0.6, row_top - h * 0.005, w * 0.27, row_h + h * 0.01),
+                      f"{now.hour:02d}:{now.minute:02d}", on, off)
         # the pixel bar: one pixel more for every minute of the hour
         cells = 60
         bar = QRectF(w * 0.13, h * 0.895, w * 0.74, h * 0.022)
@@ -765,5 +758,394 @@ class Synthwave(Scene):
         p.drawLine(QPointF(box.left() + s * 0.02, horizon), QPointF(box.right() - s * 0.02, horizon))
 
 
-SCENES = [LedClock, Aquarium, NightSky, RainyWindow, Synthwave]
+# ---------------------------------------------------------------- Arcade
+
+MAZE_BLUE, PELLET, CHOMPER = QColor("#2D5BFF"), QColor("#FFC6B8"), QColor("#FFE135")
+
+
+class Arcade(Scene):
+    """An old arcade cabinet: a neon maze runs round the screen and a little yellow
+    chomper goes round and round it eating the dots (they come back for the next lap),
+    while the score ticks up."""
+
+    key = "anim:arcade"
+    name = "Arcade (animated)"
+    card_color = QColor("#05050C")
+    ink_color = QColor("#F4F4F8")
+    AREA = (0.2, 0.2, 0.8, 0.78)
+    LOOP = 12.0                # seconds for one lap
+    PELLETS = 44
+    POWER = (0.24, 0.49, 0.74, 0.99)
+
+    @staticmethod
+    def _screen(w: float, h: float) -> QRectF:
+        s = min(w, h)
+        return QRectF(0, 0, w, h).adjusted(s * 0.015, s * 0.015, -s * 0.015, -s * 0.015)
+
+    @staticmethod
+    def _lane(w: float, h: float) -> QPainterPath:
+        """The middle of the corridor the chomper runs along."""
+        s = min(w, h)
+        return _rounded(QRectF(0, 0, w, h).adjusted(s * 0.075, s * 0.075, -s * 0.075, -s * 0.075), s * 0.05)
+
+    @staticmethod
+    def _card_rect(w: float, h: float) -> QRectF:
+        s = min(w, h)
+        return QRectF(0, 0, w, h).adjusted(s * 0.16, s * 0.16, -s * 0.16, -s * 0.16)
+
+    def still(self, p: QPainter, w: float, h: float) -> None:
+        s = min(w, h)
+        screen = self._screen(w, h)
+        p.setPen(QPen(QColor("#1A1A2E"), max(1.0, s * 0.01)))
+        p.setBrush(QColor("#05050C"))
+        p.drawRoundedRect(screen, s * 0.07, s * 0.07)
+        # the maze: two neon walls with the corridor between them
+        glow = QColor(MAZE_BLUE)
+        glow.setAlpha(70)
+        for inset, radius in ((0.035, 0.07), (0.115, 0.03)):
+            wall = QRectF(0, 0, w, h).adjusted(s * inset, s * inset, -s * inset, -s * inset)
+            for pen in (QPen(glow, s * 0.018), QPen(MAZE_BLUE, max(1.0, s * 0.007))):
+                p.setPen(pen)
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRoundedRect(wall, s * radius, s * radius)
+        card = self._card_rect(w, h)
+        p.setPen(QPen(QColor(45, 91, 255, 120), max(1.0, s * 0.004)))
+        p.setBrush(QColor("#0B0B1A"))
+        p.drawRoundedRect(card, s * 0.025, s * 0.025)
+
+    def moving(self, p: QPainter, w: float, h: float, t: float) -> None:
+        s = min(w, h)
+        lane = self._lane(w, h)
+        lap, head = divmod(t / self.LOOP, 1.0)
+        # dots: eaten as the chomper passes, all back for the next lap; the big ones blink
+        eaten = 0
+        p.setPen(Qt.PenStyle.NoPen)
+        for i in range(self.PELLETS):
+            at = (i + 0.5) / self.PELLETS
+            if at <= head:
+                eaten += 1
+                continue
+            power = any(abs(at - q) < 0.5 / self.PELLETS for q in self.POWER)
+            if power and math.sin(t * 6) < -0.2:
+                continue
+            p.setBrush(PELLET)
+            r = s * (0.016 if power else 0.0065)
+            p.drawEllipse(lane.pointAtPercent(at), r, r)
+        # the chomper: mouth opening and closing, facing the way it goes
+        pos = lane.pointAtPercent(head)
+        angle = lane.angleAtPercent(head)
+        r = s * 0.034
+        bite = 8 + 34 * abs(math.sin(t * 10))
+        p.save()
+        p.translate(pos)
+        p.rotate(-angle)
+        body = QPainterPath()
+        body.moveTo(0, 0)
+        body.arcTo(QRectF(-r, -r, 2 * r, 2 * r), bite, 360 - 2 * bite)
+        body.closeSubpath()
+        glow = QColor(CHOMPER)
+        glow.setAlpha(60)
+        p.setBrush(glow)
+        p.drawEllipse(QPointF(0, 0), r * 1.35, r * 1.35)
+        p.setBrush(CHOMPER)
+        p.drawPath(body)
+        p.setBrush(QColor("#1A1A2E"))
+        p.drawEllipse(QPointF(r * 0.15, -r * 0.5), r * 0.13, r * 0.13)
+        p.restore()
+        # the score, in the gap above the screen in the middle
+        f = QFont("Consolas")
+        f.setBold(True)
+        f.setPixelSize(max(6, round(s * 0.032)))
+        p.setFont(f)
+        card = self._card_rect(w, h)
+        band = QRectF(card.left(), card.top() - s * 0.042, card.width(), s * 0.036)
+        p.setPen(QColor("#FF4F4F"))
+        p.drawText(band, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "1UP")
+        p.setPen(QColor("#F4F4F8"))
+        score = int(lap) * (self.PELLETS * 10 + 200) + eaten * 10
+        p.drawText(band, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{score:06d}")
+
+
+# ---------------------------------------------------------------- Weather
+
+SKIES = {   # (top, bottom) of the sky, by day
+    "clear": ("#2F80ED", "#8CC8FF"), "partly": ("#3B86E8", "#A9D3FF"), "cloudy": ("#71819A", "#C3CCD9"),
+    "fog": ("#9AA4B1", "#DADFE5"), "rain": ("#465163", "#8D98A9"), "snow": ("#8796AE", "#DFE6F0"),
+    "storm": ("#232833", "#4E5666"),
+}
+NIGHT_SKIES = {"clear": ("#070C24", "#22305C"), "partly": ("#0A1130", "#2A3763"), "storm": ("#0B0D14", "#272C38")}
+
+
+def cloud_sprite(seed: int, w: int, h: int, dark: float) -> QImage:
+    """A soft cloud with volume. Its puffs make a density map; where the density falls
+    away towards the light (top left) the cloud is lit, where it falls away from it the
+    cloud is in shade, and the belly is darker than the top. Edges are feathered.
+    Drawn once per size, then reused every frame."""
+    from PIL import Image, ImageChops, ImageDraw, ImageFilter
+
+    rnd = random.Random(seed)
+    mask = Image.new("L", (w, h), 0)
+    draw = ImageDraw.Draw(mask)
+    base = h * 0.72
+    puffs = []
+    for i in range(8):                                   # a long, low row of small puffs
+        x = w * (0.17 + 0.66 * i / 7) + rnd.uniform(-0.02, 0.02) * w
+        r = h * rnd.uniform(0.15, 0.22) * (1 - 0.35 * abs(i / 7 - 0.5))
+        puffs.append((x, base - r * 0.55, r))
+    for _ in range(5):                                   # heaped up into a few big ones in the middle
+        x = w * rnd.uniform(0.25, 0.75)
+        r = h * rnd.uniform(0.22, 0.34) * (1 - 0.5 * abs(x / w - 0.5))
+        puffs.append((x, base - r * 0.9 - h * rnd.uniform(0.02, 0.1), r))
+    for x, y, r in puffs:
+        draw.ellipse((x - r, y - r, x + r, y + r), fill=255)
+    soft = mask.filter(ImageFilter.GaussianBlur(max(1.0, h * 0.035)))
+    density = mask.filter(ImageFilter.GaussianBlur(max(2.0, h * 0.12)))
+    step = max(1, round(h * 0.05))
+    toward = ImageChops.offset(density, step, step)      # the density a little towards the light
+    light = ImageChops.subtract(density, toward, scale=0.35, offset=128)
+    vertical = Image.linear_gradient("L").resize((w, h)).point(lambda v: 255 - v)
+    shade = Image.blend(light, vertical, 0.45).point(lambda v: max(0, min(255, int((v - 70) * 1.6))))
+
+    def tone(a: str, b: str) -> tuple:
+        ca, cb = QColor(a), QColor(b)
+        return (round(ca.red() + (cb.red() - ca.red()) * dark), round(ca.green() + (cb.green() - ca.green()) * dark),
+                round(ca.blue() + (cb.blue() - ca.blue()) * dark))
+    lit = Image.new("RGB", (w, h), tone("#FFFFFF", "#B7BEC9"))
+    belly = Image.new("RGB", (w, h), tone("#B9C6D8", "#3E4552"))
+    rgb = Image.composite(lit, belly, shade)
+    out = rgb.convert("RGBA")
+    out.putalpha(soft.point(lambda v: min(255, int(v * 1.15))))
+    img = QImage(out.tobytes(), w, h, w * 4, QImage.Format.Format_RGBA8888).copy()
+    return img.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+
+
+class WeatherSky(Scene):
+    """The weather where you are, live: sun, clouds, rain, snow, a storm, fog, or the
+    night sky. It changes by itself when the weather does (City in Settings > Look)."""
+
+    key = "anim:weather"
+    name = "Weather (live, animated)"
+    card_color = QColor("#F7F9FC")
+    ink_color = QColor("#1F2A3A")
+    AREA = (0.17, 0.31, 0.83, 0.76)
+
+    def __init__(self):
+        super().__init__()
+        self.sprites: dict = {}
+        self.backdrops: dict = {}
+        rnd = random.Random(21)
+        self.rain = [(rnd.random(), rnd.random(), rnd.uniform(0.7, 1.3)) for _ in range(80)]
+        self.snow = [(rnd.random(), rnd.random(), rnd.uniform(0.5, 1.4), rnd.uniform(0, 6.3)) for _ in range(55)]
+        self.stars = [(rnd.random(), rnd.random() * 0.3, rnd.uniform(0.003, 0.008), rnd.uniform(0, 6.3))
+                      for _ in range(40)]
+
+    def frame_id(self) -> int:
+        from peelpad import weather
+
+        state, day = weather.shown()
+        return int(now_ms() // self.frame_ms) * 32 + weather.STATES.index(state) * 2 + day
+
+    @staticmethod
+    def _card_rect(w: float, h: float) -> QRectF:
+        return QRectF(w * 0.12, h * 0.26, w * 0.76, h * 0.56)
+
+    @staticmethod
+    def _sky(w: float, h: float) -> QRectF:
+        s = min(w, h)
+        return QRectF(0, 0, w, h).adjusted(s * 0.015, s * 0.015, -s * 0.015, -s * 0.015)
+
+    def paint_front(self, p: QPainter, w: float, h: float, color: int, t: float | None = None) -> None:
+        from peelpad import weather
+
+        t = now_ms() / 1000 if t is None else t
+        state, day = weather.shown()
+        backdrop = self.backdrops.setdefault((state, day), Backdrop())
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        backdrop.paint(p, w, h, lambda q, ww, hh: self._still(q, ww, hh, state, day))
+        self._moving(p, w, h, t, state, day)
+        p.restore()
+
+    def _still(self, p: QPainter, w: float, h: float, state: str, day: bool) -> None:
+        s = min(w, h)
+        sky = self._sky(w, h)
+        top, bottom = (SKIES[state] if day else NIGHT_SKIES.get(state, ("#141A2C", "#3A4256")))
+        g = QLinearGradient(sky.topLeft(), sky.bottomLeft())
+        g.setColorAt(0, QColor(top))
+        g.setColorAt(1, QColor(bottom))
+        p.setPen(QPen(QColor(0, 0, 0, 50), max(1.0, s * 0.006)))
+        p.setBrush(g)
+        p.drawRoundedRect(sky, s * 0.08, s * 0.08)
+        card = self._card_rect(w, h)
+        _card(p, card, s * 0.04, QColor(247, 249, 252, 228) if day else QColor(240, 242, 250, 236),
+              QColor(255, 255, 255, 190), shadow=0.25)
+
+    def _sprite(self, p: QPainter, seed: int, w: float, dark: float) -> QImage:
+        scale = max(1.0, abs(p.worldTransform().m11()))
+        key = (seed, round(w * scale), round(dark, 2))
+        if key not in self.sprites:
+            if len(self.sprites) > 40:
+                self.sprites.clear()
+            self.sprites[key] = cloud_sprite(seed, max(8, round(w * scale)), max(4, round(w * scale * 0.55)), dark)
+        return self.sprites[key]
+
+    def _clouds(self, p: QPainter, sky: QRectF, s: float, t: float, count: int, dark: float, high: float) -> None:
+        """Clouds in two layers drifting by, the far ones smaller, slower and fainter."""
+        for i in range(count):
+            near = i % 2 == 0
+            width = s * (0.5 if near else 0.34) * (1 + 0.15 * math.sin(i * 1.7))
+            speed = (0.012 if near else 0.006) * (1 + 0.3 * math.sin(i * 2.3))
+            x = ((t * speed + i * 0.37) % 1.6 - 0.3) * sky.width() + sky.left() - width / 2
+            y = sky.top() + s * (high + (0.02 if near else -0.02) + 0.03 * math.sin(i * 3.1))
+            img = self._sprite(p, 100 + i, width, min(1.0, dark + (0 if near else -0.15)))
+            p.setOpacity(1.0 if near else 0.8)
+            p.drawImage(QRectF(x, y, width, width * 0.55), img)
+        p.setOpacity(1.0)
+
+    def _moving(self, p: QPainter, w: float, h: float, t: float, state: str, day: bool) -> None:
+        from peelpad import weather
+
+        s = min(w, h)
+        sky = self._sky(w, h)
+        card = self._card_rect(w, h)
+        p.save()
+        # nothing passes over the writing: the card stays in front
+        p.setClipPath(_rounded(sky, s * 0.08).subtracted(_rounded(card.adjusted(-1, -1, 1, 1), s * 0.04)))
+        if state in ("clear", "partly") and day:
+            self._sun(p, QPointF(sky.right() - s * 0.17, sky.top() + s * 0.13), s, t)
+        if state in ("clear", "partly") and not day:
+            self._moon(p, QPointF(sky.right() - s * 0.16, sky.top() + s * 0.12), s, t, sky)
+        clouds = {"clear": 1, "partly": 3, "cloudy": 6, "fog": 3, "rain": 6, "snow": 5, "storm": 7}[state]
+        dark = {"clear": 0.0, "partly": 0.05, "cloudy": 0.35, "fog": 0.2, "rain": 0.6, "snow": 0.25, "storm": 0.85}[state]
+        if not day:
+            dark = min(1.0, dark + 0.35)
+        self._clouds(p, sky, s, t, clouds, dark, -0.06)
+        if state in ("cloudy", "rain", "storm"):
+            self._clouds(p, sky, s, t + 40, 3, dark + 0.05, 0.74)       # low clouds along the bottom too
+        if state in ("rain", "storm"):
+            self._rain(p, sky, s, t, heavy=state == "storm")
+        if state == "snow":
+            self._snow(p, sky, s, t)
+        if state == "fog":
+            self._fog(p, sky, s, t)
+        if state == "storm":
+            self._lightning(p, sky, s, t)
+        p.restore()
+        # what the weather is, in small letters under the card
+        f = QFont("Segoe UI")
+        f.setPixelSize(max(7, round(s * 0.042)))
+        f.setBold(True)
+        p.setFont(f)
+        text = weather.LABELS[state]
+        if weather.Now.preview == "live" and weather.Now.temp is not None:
+            text = f"{round(weather.Now.temp)}°  {text}"
+        if weather.Now.preview == "live" and weather.Now.place:
+            text += f"  ·  {weather.Now.place}"
+        band = QRectF(card.left(), card.bottom() + s * 0.025, card.width(), s * 0.07)
+        p.setPen(QColor(0, 0, 0, 90))
+        p.drawText(band.translated(0, 1), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+        p.setPen(QColor("white"))
+        p.drawText(band, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+
+    @staticmethod
+    def _sun(p: QPainter, c: QPointF, s: float, t: float) -> None:
+        glow = QRadialGradient(c, s * 0.26)
+        glow.setColorAt(0, QColor(255, 236, 150, 170))
+        glow.setColorAt(1, QColor(255, 236, 150, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(glow)
+        p.drawEllipse(c, s * 0.26, s * 0.26)
+        p.save()
+        p.translate(c)
+        p.rotate(t * 6)
+        for i in range(12):                              # soft rays, slowly turning
+            p.rotate(30)
+            ray = QPolygonF([QPointF(s * 0.085, -s * 0.012), QPointF(s * 0.17, 0), QPointF(s * 0.085, s * 0.012)])
+            p.setBrush(QColor(255, 225, 120, 110 + int(40 * math.sin(t * 2 + i))))
+            p.drawPolygon(ray)
+        p.restore()
+        disc = QRadialGradient(c - QPointF(s * 0.02, s * 0.02), s * 0.08)
+        disc.setColorAt(0, QColor("#FFF7C2"))
+        disc.setColorAt(1, QColor("#FFC93C"))
+        p.setBrush(disc)
+        p.drawEllipse(c, s * 0.07, s * 0.07)
+
+    def _moon(self, p: QPainter, c: QPointF, s: float, t: float, sky: QRectF) -> None:
+        p.setPen(Qt.PenStyle.NoPen)
+        for x, y, r, phase in self.stars:
+            k = 0.4 + 0.6 * (0.5 + 0.5 * math.sin(t * 2.2 + phase))
+            p.setBrush(QColor(255, 255, 240, int(255 * k)))
+            p.drawEllipse(QPointF(sky.left() + x * sky.width(), sky.top() + y * sky.height()), s * r, s * r)
+        halo = QRadialGradient(c, s * 0.18)
+        halo.setColorAt(0, QColor(255, 244, 194, 80))
+        halo.setColorAt(1, QColor(255, 244, 194, 0))
+        p.setBrush(halo)
+        p.drawEllipse(c, s * 0.18, s * 0.18)
+        crescent = QPainterPath()
+        crescent.addEllipse(c, s * 0.065, s * 0.065)
+        bite = QPainterPath()
+        bite.addEllipse(c + QPointF(-s * 0.03, -s * 0.018), s * 0.058, s * 0.058)
+        p.setBrush(QColor("#FFF4C2"))
+        p.drawPath(crescent.subtracted(bite))
+
+    def _rain(self, p: QPainter, sky: QRectF, s: float, t: float, heavy: bool) -> None:
+        slant = 0.25
+        for x, phase, depth in self.rain[: 80 if heavy else 55]:
+            speed = 1.1 * depth
+            y = (t * speed + phase) % 1.15 - 0.1
+            head = QPointF(sky.left() + ((x + y * slant * 0.3) % 1.0) * sky.width(), sky.top() + y * sky.height())
+            length = s * 0.05 * depth
+            tail = head - QPointF(length * slant, length)
+            p.setPen(QPen(QColor(220, 232, 255, int(120 * depth)), max(0.7, s * 0.0045 * depth),
+                          Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawLine(tail, head)
+
+    def _snow(self, p: QPainter, sky: QRectF, s: float, t: float) -> None:
+        p.setPen(Qt.PenStyle.NoPen)
+        for x, phase, size, sway in self.snow:
+            y = (t * 0.07 * (0.6 + size * 0.4) + phase) % 1.1 - 0.05
+            c = QPointF(sky.left() + (x + 0.02 * math.sin(t * 1.3 + sway)) * sky.width(), sky.top() + y * sky.height())
+            r = s * 0.008 * size
+            glow = QRadialGradient(c, r * 2)
+            glow.setColorAt(0, QColor(255, 255, 255, 230))
+            glow.setColorAt(0.5, QColor(255, 255, 255, 160))
+            glow.setColorAt(1, QColor(255, 255, 255, 0))
+            p.setBrush(glow)
+            p.drawEllipse(c, r * 2, r * 2)
+
+    @staticmethod
+    def _fog(p: QPainter, sky: QRectF, s: float, t: float) -> None:
+        p.setPen(Qt.PenStyle.NoPen)
+        for i, y in enumerate((0.12, 0.84, 0.95)):
+            x = ((t * (0.01 + i * 0.004) + i * 0.3) % 1.4 - 0.2) * sky.width() + sky.left()
+            band = QRadialGradient(QPointF(x, sky.top() + y * sky.height()), s * 0.6)
+            band.setColorAt(0, QColor(255, 255, 255, 120))
+            band.setColorAt(1, QColor(255, 255, 255, 0))
+            p.setBrush(band)
+            p.drawEllipse(QPointF(x, sky.top() + y * sky.height()), s * 0.6, s * 0.12)
+
+    @staticmethod
+    def _lightning(p: QPainter, sky: QRectF, s: float, t: float) -> None:
+        cycle = 4.3
+        k = (t % cycle) / 0.35                           # a flash lasts about a third of a second
+        if k >= 1:
+            return
+        n = int(t // cycle)
+        p.fillRect(sky, QColor(255, 255, 255, int(110 * (1 - k))))
+        rnd = random.Random(n)
+        x = sky.left() + sky.width() * rnd.choice((0.07, 0.1, 0.9, 0.93))
+        y = sky.top() + s * 0.12
+        bolt = [QPointF(x, y)]
+        while y < sky.bottom() - s * 0.1:
+            y += s * rnd.uniform(0.05, 0.09)
+            x += s * rnd.uniform(-0.04, 0.04)
+            bolt.append(QPointF(x, y))
+        glow = QColor(200, 220, 255, int(140 * (1 - k)))
+        p.setPen(QPen(glow, s * 0.02, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        p.drawPolyline(bolt)
+        p.setPen(QPen(QColor(255, 255, 255, int(255 * (1 - k))), s * 0.006))
+        p.drawPolyline(bolt)
+
+
+SCENES = [WeatherSky, LedClock, Arcade, Aquarium, NightSky, RainyWindow, Synthwave]
 BY_KEY = {cls.key: cls for cls in SCENES}
