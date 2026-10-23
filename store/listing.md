@@ -3,6 +3,15 @@
 Copy each field into Partner Center > Store listings. Category: **Productivity**.
 Price: **Free**. Screenshots: `store/screenshots/` (1920 × 1080, the same for every language).
 
+Store logos (`store/logos/`, the same for every language):
+
+| Partner Center field | File |
+|---|---|
+| 1:1 App tile icon (300 × 300) | `app-tile-icon-300.png` |
+| 1:1 Box art (1080 × 1080 or 2160 × 2160) | `box-art-2160.png` (or `box-art-1080.png`) |
+| 2:3 Poster art (720 × 1080 or 1440 × 2160) | `poster-art-1440x2160.png` (or `poster-art-720x1080.png`) |
+| 16:9 Hero image (Store display images, optional) | `hero-3840x2160.png` (or `hero-1920x1080.png`) |
+
 Shared fields (all languages):
 
 - **Product name:** Peelpad
