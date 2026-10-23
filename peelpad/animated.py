@@ -90,6 +90,30 @@ class AnimatedSkin(PictureSkin):
 
 # ---------------------------------------------------------------- Peelpad's own: Skull parade
 
+class Backdrop:
+    """The parts of a drawn skin that never move, drawn once per size and reused every frame."""
+
+    def __init__(self):
+        self.cache: dict = {}
+
+    def paint(self, p: QPainter, w: float, h: float, draw) -> None:
+        scale = max(1.0, abs(p.worldTransform().m11()))
+        key = (round(w), round(h), round(scale, 2))
+        img = self.cache.get(key)
+        if img is None:
+            img = QImage(max(1, round(w * scale)), max(1, round(h * scale)), QImage.Format.Format_ARGB32_Premultiplied)
+            img.fill(Qt.GlobalColor.transparent)
+            q = QPainter(img)
+            q.setRenderHint(QPainter.RenderHint.Antialiasing)
+            q.scale(scale, scale)
+            draw(q, w, h)
+            q.end()
+            if len(self.cache) > 6:
+                self.cache.clear()
+            self.cache[key] = img
+        p.drawImage(QRectF(0, 0, w, h), img)
+
+
 INK = QColor("#2B1E2E")
 CREAM = QColor("#FFF6E2")
 FRAME = QColor("#17131B")
@@ -182,13 +206,34 @@ class SkullParade(Skin):
     key = "anim:skulls"
     name = "Skull parade (animated)"
     animated = True
-    frame_ms = 33
+    frame_ms = 40
     LOOP = 5.0                # seconds for one run across
 
     def __init__(self):
         super().__init__(cycle=False)
         self.key, self.name = SkullParade.key, SkullParade.name
         self.area = self.auto_area = (0.15, 0.27, 0.85, 0.68)
+        self.backdrop = Backdrop()
+
+    @staticmethod
+    def _boxes(w: float, h: float) -> tuple[QRectF, QRectF]:
+        s = min(w, h)
+        outer = QRectF(0, 0, w, h).adjusted(s * 0.02, s * 0.05, -s * 0.02, -s * 0.02)
+        return outer, outer.adjusted(s * 0.07, s * 0.08, -s * 0.07, -s * 0.07)
+
+    def _still(self, p: QPainter, w: float, h: float) -> None:
+        s = min(w, h)
+        outer, card = self._boxes(w, h)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(FRAME)
+        p.drawRoundedRect(outer, s * 0.08, s * 0.08)
+        p.setBrush(CREAM)
+        p.drawRoundedRect(card, s * 0.06, s * 0.06)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor("#B89A6A"), max(1.0, s * 0.006), Qt.PenStyle.DashLine))
+        p.drawRoundedRect(card.adjusted(s * 0.025, s * 0.025, -s * 0.025, -s * 0.025), s * 0.045, s * 0.045)
+        _bone(p, QPointF(outer.left() + s * 0.035, outer.top() + h * 0.35), QPointF(outer.left() + s * 0.035, outer.top() + h * 0.5), s * 0.05)
+        _bone(p, QPointF(outer.right() - s * 0.035, outer.top() + h * 0.5), QPointF(outer.right() - s * 0.035, outer.top() + h * 0.65), s * 0.05)
 
     def ink(self, color: int) -> QColor:
         return QColor(INK)
@@ -204,19 +249,9 @@ class SkullParade(Skin):
         s = min(w, h)
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        outer = QRectF(0, 0, w, h).adjusted(s * 0.02, s * 0.05, -s * 0.02, -s * 0.02)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(FRAME)
-        p.drawRoundedRect(outer, s * 0.08, s * 0.08)
-        card = outer.adjusted(s * 0.07, s * 0.08, -s * 0.07, -s * 0.07)
-        p.setBrush(CREAM)
-        p.drawRoundedRect(card, s * 0.06, s * 0.06)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor("#B89A6A"), max(1.0, s * 0.006), Qt.PenStyle.DashLine))
-        p.drawRoundedRect(card.adjusted(s * 0.025, s * 0.025, -s * 0.025, -s * 0.025), s * 0.045, s * 0.045)
-        # bones and twinkling stars on the frame
-        _bone(p, QPointF(outer.left() + s * 0.035, outer.top() + h * 0.35), QPointF(outer.left() + s * 0.035, outer.top() + h * 0.5), s * 0.05)
-        _bone(p, QPointF(outer.right() - s * 0.035, outer.top() + h * 0.5), QPointF(outer.right() - s * 0.035, outer.top() + h * 0.65), s * 0.05)
+        self.backdrop.paint(p, w, h, self._still)
+        outer, card = self._boxes(w, h)
+        # twinkling stars on the frame
         for i, (fx, fy) in enumerate(((0.45, 0.07), (0.62, 0.065), (0.04, 0.72), (0.96, 0.3), (0.7, 0.97), (0.3, 0.97))):
             twinkle = 0.75 + 0.35 * math.sin(t * 3.2 + i * 1.7)
             _star(p, QPointF(w * fx, h * fy), s * 0.034 * twinkle)
@@ -314,7 +349,7 @@ class AppleWorm(Skin):
     key = "anim:worm"
     name = "Apple worm (animated)"
     animated = True
-    frame_ms = 33
+    frame_ms = 40
     LOOP = 14.0               # seconds for one trip round the frame
     APPLES = (0.05, 0.2, 0.33, 0.47, 0.6, 0.72, 0.86)
     SEGMENTS = 9
@@ -323,6 +358,36 @@ class AppleWorm(Skin):
         super().__init__(cycle=False)
         self.key, self.name = AppleWorm.key, AppleWorm.name
         self.area = self.auto_area = (0.17, 0.2, 0.83, 0.8)
+        self.backdrop = Backdrop()
+
+    @staticmethod
+    def _outer(w: float, h: float) -> QRectF:
+        s = min(w, h)
+        return QRectF(0, 0, w, h).adjusted(s * 0.025, s * 0.025, -s * 0.025, -s * 0.025)
+
+    def _still(self, p: QPainter, w: float, h: float) -> None:
+        """A black frame with a gently wavy outside edge, round a cream card."""
+        s = min(w, h)
+        outer = self._outer(w, h)
+        frame = QPainterPath()
+        frame.addRoundedRect(outer, s * 0.09, s * 0.09)
+        bumps = QPainterPath()
+        for i in range(14):
+            k = (i + 0.5) / 14
+            for pt in (QPointF(outer.left() + k * outer.width(), outer.top() + s * 0.012),
+                       QPointF(outer.left() + k * outer.width(), outer.bottom() - s * 0.012),
+                       QPointF(outer.left() + s * 0.012, outer.top() + k * outer.height()),
+                       QPointF(outer.right() - s * 0.012, outer.top() + k * outer.height())):
+                bumps.addEllipse(pt, s * 0.03, s * 0.03)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(FRAME)
+        p.drawPath(frame.united(bumps))
+        card = outer.adjusted(s * 0.11, s * 0.11, -s * 0.11, -s * 0.11)
+        p.setBrush(CREAM)
+        p.drawRoundedRect(card, s * 0.05, s * 0.05)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor("#B89A6A"), max(1.0, s * 0.006), Qt.PenStyle.DashLine))
+        p.drawRoundedRect(card.adjusted(s * 0.022, s * 0.022, -s * 0.022, -s * 0.022), s * 0.04, s * 0.04)
 
     def ink(self, color: int) -> QColor:
         return QColor(INK)
@@ -346,28 +411,8 @@ class AppleWorm(Skin):
         s = min(w, h)
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        outer = QRectF(0, 0, w, h).adjusted(s * 0.025, s * 0.025, -s * 0.025, -s * 0.025)
-        # a black frame with a gently wavy outside edge
-        frame = QPainterPath()
-        frame.addRoundedRect(outer, s * 0.09, s * 0.09)
-        bumps = QPainterPath()
-        for i in range(14):
-            k = (i + 0.5) / 14
-            for pt in (QPointF(outer.left() + k * outer.width(), outer.top() + s * 0.012),
-                       QPointF(outer.left() + k * outer.width(), outer.bottom() - s * 0.012),
-                       QPointF(outer.left() + s * 0.012, outer.top() + k * outer.height()),
-                       QPointF(outer.right() - s * 0.012, outer.top() + k * outer.height())):
-                bumps.addEllipse(pt, s * 0.03, s * 0.03)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(FRAME)
-        p.drawPath(frame.united(bumps))
-        card = outer.adjusted(s * 0.11, s * 0.11, -s * 0.11, -s * 0.11)
-        p.setBrush(CREAM)
-        p.drawRoundedRect(card, s * 0.05, s * 0.05)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor("#B89A6A"), max(1.0, s * 0.006), Qt.PenStyle.DashLine))
-        p.drawRoundedRect(card.adjusted(s * 0.022, s * 0.022, -s * 0.022, -s * 0.022), s * 0.04, s * 0.04)
-        track = self._track(outer, s)
+        self.backdrop.paint(p, w, h, self._still)
+        track = self._track(self._outer(w, h), s)
         head = (t / self.LOOP) % 1.0
         # the apples: eaten when the head reaches them, back again once the worm has gone
         for a in self.APPLES:
