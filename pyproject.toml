@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "peelpad"
-version = "1.0.0"
+version = "1.0.1"
 description = "Physics sticky notes for Windows: peel a note off the pad, pin it anywhere on top, check off tasks and watch it crumple."
 readme = "README.md"
 license = "MIT"

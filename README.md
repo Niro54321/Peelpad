@@ -137,6 +137,18 @@ Build the installer (needs `pip install pyinstaller` and Inno Setup 6):
 .venv\Scripts\python packaging\build.py
 ```
 
+Build the Microsoft Store package (MSIX, signed by the Store when you submit it).
+It needs `makeappx.exe` from Microsoft's
+[Windows SDK build tools](https://www.nuget.org/packages/Microsoft.Windows.SDK.BuildTools)
+unpacked under `build\sdk`, and your Partner Center identity in `packaging\store.json`:
+
+```bash
+.venv\Scripts\python packaging\msix.py
+```
+
+The Store listing (5 languages) is in [store/listing.md](store/listing.md), its
+screenshots in `store/screenshots` (`store\screenshots.py` draws them).
+
 ## How the paper works
 
 There's no game engine. The sheet is cut into thin bands, and each band is drawn

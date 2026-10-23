@@ -17,7 +17,7 @@ from peelpad.skins import DARK_INK, LIGHT_INK, note_images, skin_for
 from peelpad.stage import CrumpleActor, Stages
 from peelpad.store import Store
 from peelpad.theme import app_icon
-from peelpad.util import app_data_dir
+from peelpad.util import app_data_dir, packaged
 
 APP_ID = "Niro54321.Peelpad"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -359,7 +359,7 @@ class App(QObject):
         return f'"{pythonw}" -c "import sys; sys.path.insert(0, r\'{root}\'); from peelpad.app import main; main()"'
 
     def startup_enabled(self) -> bool:
-        if sys.platform != "win32":
+        if sys.platform != "win32" or packaged():
             return False
         import winreg
         try:
@@ -370,7 +370,7 @@ class App(QObject):
             return False
 
     def set_startup(self, on: bool) -> None:
-        if sys.platform != "win32":
+        if sys.platform != "win32" or packaged():
             return
         import winreg
         try:
@@ -440,8 +440,8 @@ def _already_running() -> bool:
 
 
 def main() -> None:
-    if sys.platform == "win32":
-        # its own taskbar button and icon, not python.exe's
+    if sys.platform == "win32" and not packaged():
+        # its own taskbar button and icon, not python.exe's (the Store version gets its own from the package)
         import ctypes
 
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)

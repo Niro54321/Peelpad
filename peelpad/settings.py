@@ -8,8 +8,8 @@ import subprocess
 from datetime import date, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QFileDialog, QFontComboBox, QGridLayout,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
                                QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QFileDialo
 from peelpad.skins import (GLUE, NEON, SIDE, TEMPLATE, all_skins, hand_family, import_skin, preview,
                            save_template)
 from peelpad.i18n import LANGS, date_text, month_title, tr, weekday_names
+from peelpad.util import packaged
 from peelpad.weather import PREVIEWS
 from peelpad.widgets import GlassWindow, Segmented, SliderRow, label
 
@@ -934,10 +935,19 @@ class Settings(GlassWindow):
         col.addWidget(label("Moving notes", bold=True))
         col.addWidget(label("Drag a note by its paper, or double-click it: it follows your mouse without holding "
                             "the button, and lands where you click.", muted=True, size=12))
-        startup = QCheckBox(tr("Start Peelpad when Windows starts"))
-        startup.setChecked(self.app.startup_enabled())
-        startup.toggled.connect(self.app.set_startup)
-        col.addWidget(startup)
+        if packaged():                    # the Store version starts with Windows through Windows' own list
+            startup = QPushButton(tr("Start Peelpad when Windows starts…"))
+            startup.setToolTip(tr("Turn Peelpad on in Windows Settings › Apps › Startup"))
+            startup.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("ms-settings:startupapps")))
+            row = QHBoxLayout()
+            row.addWidget(startup)
+            row.addStretch()
+            col.addLayout(row)
+        else:
+            startup = QCheckBox(tr("Start Peelpad when Windows starts"))
+            startup.setChecked(self.app.startup_enabled())
+            startup.toggled.connect(self.app.set_startup)
+            col.addWidget(startup)
         folder = QPushButton(tr("Open the data folder"))
         folder.clicked.connect(lambda: subprocess.Popen(["explorer", str(self.app.data_dir)]))
         row = QHBoxLayout()

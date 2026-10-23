@@ -328,6 +328,13 @@ T: dict[str, tuple[str, str, str, str]] = {
         "拖动便签的纸面, 或双击它: 不用按住按键它也会跟随鼠标, 并落在你点击的位置。"),
     "Start Peelpad when Windows starts": ("شغّل Peelpad مع بدء Windows", "Abrir Peelpad al iniciar Windows",
                                           "Windows 起動時に Peelpad を開く", "Windows 启动时打开 Peelpad"),
+    "Start Peelpad when Windows starts…": ("شغّل Peelpad مع بدء Windows…", "Abrir Peelpad al iniciar Windows…",
+                                           "Windows 起動時に Peelpad を開く…", "Windows 启动时打开 Peelpad…"),
+    "Turn Peelpad on in Windows Settings › Apps › Startup": (
+        "فعّل Peelpad من إعدادات Windows › التطبيقات › بدء التشغيل",
+        "Activa Peelpad en Configuración de Windows › Aplicaciones › Inicio",
+        "Windows の設定 › アプリ › スタートアップ で Peelpad をオンにする",
+        "在 Windows 设置 › 应用 › 启动 中打开 Peelpad"),
     "Open the data folder": ("افتح مجلد البيانات", "Abrir la carpeta de datos", "データフォルダーを開く", "打开数据文件夹"),
     "Language": ("اللغة", "Idioma", "言語", "语言"),
     "Auto (Windows)": ("تلقائي (Windows)", "Auto (Windows)", "自動 (Windows)", "自动 (Windows)"),

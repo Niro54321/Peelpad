@@ -42,7 +42,8 @@ def prepare() -> None:
     from peelpad.theme import save_ico
 
     BUILD.mkdir(exist_ok=True)
-    _app = QGuiApplication.instance() or QGuiApplication(["build"])  # icons need Qt
+    app = QGuiApplication.instance() or QGuiApplication(["build"])  # icons need Qt
+    assert app is not None
     save_ico(BUILD / "peelpad.ico")
     nums = ", ".join((__version__.split(".") + ["0"] * 4)[:4])
     (BUILD / "version.txt").write_text(f"""VSVersionInfo(
