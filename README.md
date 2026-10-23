@@ -45,7 +45,11 @@ off every task, the note crumples into a ball and disappears.
 - **Writing.** Pick any font (the default is handwriting), the text size, any
   ink colour, and an effect: Solid, Gradient, Neon (shines like a sign), Toon
   (cartoon outline), Pop (bold offset shadow), Gummy (candy shine) or Prism
-  (rainbow).
+  (rainbow). Arabic is written in [Aref Ruqaa](https://github.com/alif-type/aref-ruqaa),
+  a Ruqʿah font that looks written with a pen (SIL Open Font License, included).
+- **Your language.** English, العربية, Español, 日本語 and 中文. Peelpad follows
+  your Windows language, or pick one in Settings → General. In Arabic the
+  windows read right to left.
 
 ## Your own skin
 

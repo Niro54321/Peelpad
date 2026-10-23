@@ -3,13 +3,12 @@ notes (themes, your own colours, your own skins), the writing, and a few switche
 
 from __future__ import annotations
 
-import calendar
 import html
 import subprocess
 from datetime import date, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QFileDialog, QFontComboBox, QGridLayout,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
@@ -17,6 +16,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QFileDialo
 
 from peelpad.skins import (GLUE, NEON, SIDE, TEMPLATE, all_skins, hand_family, import_skin, preview,
                            save_template)
+from peelpad.i18n import LANGS, date_text, month_title, tr, weekday_names
 from peelpad.weather import PREVIEWS
 from peelpad.widgets import GlassWindow, Segmented, SliderRow, label
 
@@ -111,7 +111,7 @@ class MonthView(QWidget):
         faint.setAlpha(150)
         p.setPen(faint)
         cw = self.width() / 7
-        for i, name in enumerate(calendar.day_abbr):
+        for i, name in enumerate(weekday_names()):
             p.drawText(QRectF(i * cw, 0, cw, 20), Qt.AlignmentFlag.AlignCenter, name)
         today = date.today()
         lime, lemon, pink = QColor(NEON[3][1]), QColor(NEON[0][1]), QColor(NEON[2][1])
@@ -223,7 +223,8 @@ class AreaEditor(QWidget):
         p.setPen(QPen(QColor("#FF4FA8"), 2, Qt.PenStyle.DashLine))
         p.drawRect(box)
         p.setPen(QColor("#FF4FA8"))
-        p.drawText(box.adjusted(6, 4, -4, -4), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, "☐ Your tasks here")
+        p.drawText(box.adjusted(6, 4, -4, -4), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                   "☐ " + tr("Your tasks here"))
         p.setPen(QPen(QColor("white"), 1.5))
         p.setBrush(QColor("#FF4FA8"))
         for c in self._corners().values():
@@ -352,9 +353,9 @@ class Settings(GlassWindow):
         col.addWidget(self.heatmap)
         legend = label("", muted=True, size=12)
         legend.setTextFormat(Qt.TextFormat.RichText)
-        legend.setText(f"<span style='color:{NEON[0][1]}'>■</span> wrote something &nbsp; "
-                       f"<span style='color:{NEON[3][1]}'>■</span> checked off everything &nbsp; "
-                       f"<span style='color:{NEON[2][1]}'>□</span> today")
+        legend.setText(f"<span style='color:{NEON[0][1]}'>■</span> {tr('wrote something')} &nbsp; "
+                       f"<span style='color:{NEON[3][1]}'>■</span> {tr('checked off everything')} &nbsp; "
+                       f"<span style='color:{NEON[2][1]}'>□</span> {tr('today')}")
         col.addWidget(legend)
         self.rate = label("", muted=True)
         col.addWidget(self.rate)
@@ -367,7 +368,8 @@ class Settings(GlassWindow):
             self.numbers[key].setText(str(s[key]))
         self.numbers["tasks"].setText(f"{s['tasks_done']} / {s['tasks_total']}")
         self.heatmap.set_days(s["written"], s["completed"])
-        self.rate.setText(f"{s['completion']}% of all your tasks are done · {s['notes_pinned']} notes pinned now")
+        self.rate.setText(tr("{p}% of all your tasks are done · {n} notes pinned now").format(
+            p=s["completion"], n=s["notes_pinned"]))
         self.month.set_log(self.app.store.history())
         self._show_day(self.month.selected)
 
@@ -380,7 +382,7 @@ class Settings(GlassWindow):
         bar = QHBoxLayout()
         back = QPushButton("‹")
         ahead = QPushButton("›")
-        this = QPushButton("Today")
+        this = QPushButton(tr("Today"))
         for b in (back, ahead):
             b.setFixedWidth(44)
         self.month_name = label("", bold=True, size=16)
@@ -398,11 +400,11 @@ class Settings(GlassWindow):
         self.day_list.setMinimumHeight(110)
         col.addWidget(self.day_list, 2)
         tools = QHBoxLayout()
-        forget_some = QPushButton("Delete ticked")
-        forget_some.setToolTip("Tick tasks in the list, then delete them from History")
-        forget_day = QPushButton("Delete this day")
-        forget_all = QPushButton("Delete everything…")
-        forget_all.setToolTip("Every finished or thrown-away note. Notes still pinned stay.")
+        forget_some = QPushButton(tr("Delete ticked"))
+        forget_some.setToolTip(tr("Tick tasks in the list, then delete them from History"))
+        forget_day = QPushButton(tr("Delete this day"))
+        forget_all = QPushButton(tr("Delete everything…"))
+        forget_all.setToolTip(tr("Every finished or thrown-away note. Notes still pinned stay."))
         forget_some.clicked.connect(self._forget_ticked)
         forget_day.clicked.connect(self._forget_day)
         forget_all.clicked.connect(self._forget_all)
@@ -432,27 +434,27 @@ class Settings(GlassWindow):
         return page
 
     def _month_title(self) -> None:
-        self.month_name.setText(self.month.month.strftime("%B %Y"))
+        self.month_name.setText(month_title(self.month.month))
 
     def _show_day(self, key: str) -> None:
         from peelpad.store import day_entries
 
         entries = day_entries(self.app.store.data, key)
         done = sum(e["what"] == "done" for e in entries)
-        when = html.escape(date.fromisoformat(key).strftime("%A %d %B %Y"))
-        summary = (f"<span style='color:{NEON[3][1]}'>✓ {done} checked off</span> &nbsp; "
-                   f"<span style='color:{NEON[0][1]}'>✎ {len(entries) - done} written</span>"
-                   if entries else "Nothing written or checked off this day.")
+        when = html.escape(date_text(date.fromisoformat(key)))
+        summary = (f"<span style='color:{NEON[3][1]}'>✓ {tr('{n} checked off').format(n=done)}</span> &nbsp; "
+                   f"<span style='color:{NEON[0][1]}'>✎ {tr('{n} written').format(n=len(entries) - done)}</span>"
+                   if entries else tr("Nothing written or checked off this day."))
         self.day_text.setText(f"<b style='font-size:15px'>{when}</b><br>{summary}")
         self.day_list.clear()
         self.day_entries = entries
         for e in sorted(entries, key=lambda e: e["what"]):
             mark = "✓" if e["what"] == "done" else "✎"
-            item = QListWidgetItem(f"{mark}  {e['text']}" + ("   · on a pinned note" if e["live"] else ""))
+            item = QListWidgetItem(f"{mark}  {e['text']}" + (f"   · {tr('on a pinned note')}" if e["live"] else ""))
             item.setData(Qt.ItemDataRole.UserRole, entries.index(e))
             if e["live"]:
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled)          # still on your desktop: not History's to delete
-                item.setToolTip("This task is on a note that is still pinned. Finish or throw the note away first.")
+                item.setToolTip(tr("This task is on a note that is still pinned. Finish or throw the note away first."))
             else:
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(Qt.CheckState.Unchecked)
@@ -462,8 +464,8 @@ class Settings(GlassWindow):
         self.app.changed()
         self.refresh_stats()
         if skipped:
-            QMessageBox.information(self, "Peelpad", f"{skipped} of them are on notes still pinned, so they stay. "
-                                    "Finish or throw those notes away first.")
+            QMessageBox.information(self, "Peelpad", tr("{n} of them are on notes still pinned, so they stay. "
+                                                        "Finish or throw those notes away first.").format(n=skipped))
 
     def _forget_ticked(self) -> None:
         from peelpad.store import forget
@@ -478,15 +480,16 @@ class Settings(GlassWindow):
         from peelpad.store import forget_day
 
         day = self.month.selected
-        sure = QMessageBox.question(self, "Peelpad", f"Delete everything from {day} in History?")
+        sure = QMessageBox.question(self, "Peelpad", tr("Delete everything from {day} in History?").format(
+            day=date_text(date.fromisoformat(day))))
         if sure == QMessageBox.StandardButton.Yes:
             self._after_forget(forget_day(self.app.store.data, day))
 
     def _forget_all(self) -> None:
         from peelpad.store import forget_all
 
-        sure = QMessageBox.question(self, "Peelpad", "Delete all of History: every finished or thrown-away note, "
-                                    "and the stats that come from them? Notes still pinned stay.")
+        sure = QMessageBox.question(self, "Peelpad", tr("Delete all of History: every finished or thrown-away note, "
+                                                        "and the stats that come from them? Notes still pinned stay."))
         if sure == QMessageBox.StandardButton.Yes:
             forget_all(self.app.store.data)
             self._after_forget(0)
@@ -515,9 +518,9 @@ class Settings(GlassWindow):
         col.addWidget(label("Weather (for the Weather look)", bold=True))
         row = QHBoxLayout()
         self.city = QLineEdit(self.app.store.data["weather"].get("city", ""))
-        self.city.setPlaceholderText("Your city, e.g. Casablanca")
+        self.city.setPlaceholderText(tr("Your city, e.g. Casablanca"))
         self.city.returnPressed.connect(lambda: self.app.set_weather_city(self.city.text()))
-        set_city = QPushButton("Set")
+        set_city = QPushButton(tr("Set"))
         set_city.clicked.connect(lambda: self.app.set_weather_city(self.city.text()))
         row.addWidget(self.city, 1)
         row.addWidget(set_city)
@@ -540,8 +543,8 @@ class Settings(GlassWindow):
         row = QHBoxLayout()
         self.area_editor = AreaEditor()
         self.area_editor.moved.connect(lambda area: self.app.set_area(self.app.skin.key, area))
-        auto = QPushButton("Auto")
-        auto.setToolTip("Put the text box back where Peelpad would put it")
+        auto = QPushButton(tr("Auto"))
+        auto.setToolTip(tr("Put the text box back where Peelpad would put it"))
         auto.clicked.connect(lambda: self.app.set_area(self.app.skin.key, None))
         row.addWidget(self.area_editor, 1)
         side = QVBoxLayout()
@@ -552,12 +555,12 @@ class Settings(GlassWindow):
 
         col.addWidget(label("Your colours", bold=True))
         mine = QHBoxLayout()
-        self.paper_button = QPushButton("Paper colour…")
-        self.ink_button = QPushButton("Ink colour…")
-        self.mine_glow = QCheckBox("Glowing ink")
+        self.paper_button = QPushButton(tr("Paper colour…"))
+        self.ink_button = QPushButton(tr("Ink colour…"))
+        self.mine_glow = QCheckBox(tr("Glowing ink"))
         self.mine_glow.setChecked(bool(self.app.store.data["mine"].get("glow", True)))
-        self.paper_button.clicked.connect(lambda: self._pick_mine("paper", "Paper colour"))
-        self.ink_button.clicked.connect(lambda: self._pick_mine("ink", "Ink colour"))
+        self.paper_button.clicked.connect(lambda: self._pick_mine("paper", tr("Paper colour")))
+        self.ink_button.clicked.connect(lambda: self._pick_mine("ink", tr("Ink colour")))
         self.mine_glow.toggled.connect(lambda on: self.app.set_mine(glow=on))
         mine.addWidget(self.paper_button)
         mine.addWidget(self.ink_button)
@@ -576,39 +579,40 @@ class Settings(GlassWindow):
 
         col.addWidget(label("Your own skin", bold=True))
         row = QHBoxLayout()
-        upload = QPushButton("Upload your own skin…")
+        upload = QPushButton(tr("Upload your own skin…"))
         upload.setProperty("primary", True)
         upload.clicked.connect(self.upload)
-        template = QPushButton("Save the template PNG…")
+        template = QPushButton(tr("Save the template PNG…"))
         template.clicked.connect(self.template)
-        self.remove_button = QPushButton("Delete all my uploaded skins…")
-        self.remove_button.setToolTip("Only the pictures you uploaded; Peelpad's own looks stay")
+        self.remove_button = QPushButton(tr("Delete all my uploaded skins…"))
+        self.remove_button.setToolTip(tr("Only the pictures you uploaded; Peelpad's own looks stay"))
         self.remove_button.clicked.connect(self.delete_all_skins)
         row.addWidget(upload)
         row.addWidget(template)
         row.addWidget(self.remove_button)
         row.addStretch()
         col.addLayout(row)
-        spec = label(
-            f"<b>Design your own skin</b> — scary, cute, anything:<br>"
-            f"• <b>Size:</b> {TEMPLATE} × {TEMPLATE} px (a square). Other sizes work too: new notes take "
-            f"your picture's shape, and anything from 300 px up stays sharp.<br>"
-            f"• <b>Format:</b> PNG. Transparent pixels are see-through on your desktop (and clicks go through "
-            f"them), so a skin can be any shape: a ghost, a cat, a torn page. JPG and WebP work without transparency.<br>"
-            f"• <b>Safe text area:</b> tasks are written inside {TEMPLATE - 2 * SIDE} × {TEMPLATE - GLUE - SIDE} px: "
-            f"{SIDE} px in from the left, right and bottom, and {GLUE} px down from the top. "
-            f"The top {GLUE} px is the glue band, where the pin sits and where you grab the note. Decorate it, "
-            f"but keep the text area calm so tasks stay readable.<br>"
-            f"• <b>Ink:</b> picked for you (dark on light pictures, light on dark), or set it in Writing.<br>"
-            f"• <b>Animated:</b> an animated GIF, APNG or WebP plays on every note, looping. Same size and "
-            f"text area; keep the moving parts around the edges.<br>"
-            f"Save the template, paint over it in any editor, upload it, and every note switches to it at once.",
+        spec = label(tr(
+            "<b>Design your own skin</b> — scary, cute, anything:<br>"
+            "• <b>Size:</b> {size} × {size} px (a square). Other sizes work too: new notes take "
+            "your picture's shape, and anything from 300 px up stays sharp.<br>"
+            "• <b>Format:</b> PNG. Transparent pixels are see-through on your desktop (and clicks go through "
+            "them), so a skin can be any shape: a ghost, a cat, a torn page. JPG and WebP work without transparency.<br>"
+            "• <b>Safe text area:</b> tasks are written inside {safe_w} × {safe_h} px: "
+            "{side} px in from the left, right and bottom, and {glue} px down from the top. "
+            "The top {glue} px is the glue band, where the pin sits and where you grab the note. Decorate it, "
+            "but keep the text area calm so tasks stay readable.<br>"
+            "• <b>Ink:</b> picked for you (dark on light pictures, light on dark), or set it in Writing.<br>"
+            "• <b>Animated:</b> an animated GIF, APNG or WebP plays on every note, looping. Same size and "
+            "text area; keep the moving parts around the edges.<br>"
+            "Save the template, paint over it in any editor, upload it, and every note switches to it at once.").format(
+            size=TEMPLATE, safe_w=TEMPLATE - 2 * SIDE, safe_h=TEMPLATE - GLUE - SIDE, side=SIDE, glue=GLUE),
             size=12)
         spec.setTextFormat(Qt.TextFormat.RichText)
         col.addWidget(spec)
         row = QHBoxLayout()
-        prompt = QPushButton("Copy a prompt for an animated skin")
-        prompt.setToolTip("Paste it into an AI image or animation tool, or send it to an artist")
+        prompt = QPushButton(tr("Copy a prompt for an animated skin"))
+        prompt.setToolTip(tr("Paste it into an AI image or animation tool, or send it to an artist"))
         prompt.clicked.connect(self._copy_prompt)
         self.prompt_done = label("", muted=True, size=12)
         row.addWidget(prompt)
@@ -658,12 +662,12 @@ class Settings(GlassWindow):
             p.end()
             b.setIcon(QIcon(icon))
             b.setIconSize(QSize(70, 70))
-            b.setToolTip(skin.name)
+            b.setToolTip(tr(skin.name))
             b.setChecked(skin.key == current)
             b.clicked.connect(lambda _=False, k=skin.key: self.app.set_skin(k))
             if skin.key.startswith("custom:"):       # yours can be deleted; Peelpad's own can't
                 x = QPushButton("✕", b)
-                x.setToolTip("Delete this skin")
+                x.setToolTip(tr("Delete this skin"))
                 x.setCursor(Qt.CursorShape.PointingHandCursor)
                 x.setFixedSize(22, 22)
                 x.move(b.width() - 25, 3)
@@ -686,13 +690,15 @@ class Settings(GlassWindow):
         if getattr(self.app, "weather_note", ""):
             text = self.app.weather_note
         elif not w.get("city"):
-            text = "Type your city and press Set."
+            text = tr("Type your city and press Set.")
         elif weather.Now.updated:
             temp = f"{round(weather.Now.temp)}°, " if weather.Now.temp is not None else ""
-            text = (f"{w['city']}: {temp}{weather.LABELS[weather.Now.state].lower()}"
-                    f"{'' if weather.Now.day else ' (night)'} · checked {clock.strftime('%H:%M', clock.localtime(weather.Now.updated))}")
+            text = tr("{city}: {weather}{night} · checked {time}").format(
+                city=w["city"], weather=temp + tr(weather.LABELS[weather.Now.state]),
+                night="" if weather.Now.day else tr(" (night)"),
+                time=clock.strftime("%H:%M", clock.localtime(weather.Now.updated)))
         else:
-            text = f"{w['city']}: the weather shows once the Weather look is in use."
+            text = tr("{city}: the weather shows once the Weather look is in use.").format(city=w["city"])
         self.weather_status.setText(text)
 
     CLOCK = ["#FF2B2B", "#FF8A1F", "#FFD447", "#3DFF6E", "#22E3FF", "#3D7BFF", "#B26BFF", "#FF4FD8", "#F2F2F2"]
@@ -724,7 +730,8 @@ class Settings(GlassWindow):
 
     def _clock(self, key: str) -> None:
         if key == "pick":
-            color = QColorDialog.getColor(QColor(self.app.store.data.get("clock_color", "#FF2B2B")), self, "Clock colour")
+            color = QColorDialog.getColor(QColor(self.app.store.data.get("clock_color", "#FF2B2B")), self,
+                                          tr("Clock colour"))
             if not color.isValid():
                 self.fill_clock()
                 return
@@ -732,8 +739,8 @@ class Settings(GlassWindow):
         self.app.set_clock_color(key)
 
     def upload(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Choose your skin", str(Path.home() / "Pictures"),
-                                              "Pictures, still or animated (*.png *.gif *.webp *.jpg *.jpeg)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Choose your skin"), str(Path.home() / "Pictures"),
+                                              tr("Pictures, still or animated") + " (*.png *.gif *.webp *.jpg *.jpeg)")
         if not path:
             return
         try:
@@ -743,7 +750,7 @@ class Settings(GlassWindow):
             return
         self.app.set_skin(key)
         if notes:
-            QMessageBox.information(self, "Peelpad", "Your skin is on. A heads-up:\n\n" + "\n".join(notes))
+            QMessageBox.information(self, "Peelpad", tr("Your skin is on. A heads-up:") + "\n\n" + "\n".join(notes))
 
     def _copy_prompt(self) -> None:
         from PySide6.QtGui import QGuiApplication
@@ -751,17 +758,17 @@ class Settings(GlassWindow):
         from peelpad.guide import ANIMATED_PROMPT
 
         QGuiApplication.clipboard().setText(ANIMATED_PROMPT)
-        self.prompt_done.setText("Copied. Paste it into your AI tool and change the animation idea.")
+        self.prompt_done.setText(tr("Copied. Paste it into your AI tool and change the animation idea."))
 
     def template(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Save the skin template",
+        path, _ = QFileDialog.getSaveFileName(self, tr("Save the skin template"),
                                               str(Path.home() / "Pictures" / "peelpad-skin-template.png"),
                                               "PNG (*.png)")
         if path:
             save_template(Path(path))
 
     def delete_skin(self, key: str) -> None:
-        sure = QMessageBox.question(self, "Peelpad", "Delete this skin? Notes wearing it go back to neon.")
+        sure = QMessageBox.question(self, "Peelpad", tr("Delete this skin? Notes wearing it go back to neon."))
         if sure == QMessageBox.StandardButton.Yes:
             self.app.delete_skins([key])
 
@@ -769,8 +776,8 @@ class Settings(GlassWindow):
         mine = [f"custom:{f.name}" for f in self.app.skins_dir.glob("*.*")]
         if not mine:
             return
-        sure = QMessageBox.question(self, "Peelpad", f"Delete all {len(mine)} skins you uploaded? "
-                                    "Peelpad's own looks stay.")
+        sure = QMessageBox.question(self, "Peelpad", tr("Delete all {n} skins you uploaded? "
+                                                        "Peelpad's own looks stay.").format(n=len(mine)))
         if sure == QMessageBox.StandardButton.Yes:
             self.app.delete_skins(mine)
 
@@ -786,11 +793,16 @@ class Settings(GlassWindow):
         self.font_box = QFontComboBox()
         self.font_box.setCurrentFont(QFont(d.get("font") or hand_family()))
         self.font_box.currentFontChanged.connect(lambda f: self.app.set_writing("font", f.family()))
-        default = QPushButton("Handwriting (default)")
+        default = QPushButton(tr("Handwriting (default)"))
         default.clicked.connect(self._default_font)
         row.addWidget(self.font_box, 1)
         row.addWidget(default)
         col.addLayout(row)
+        col.addWidget(label(tr("Arabic writing"), size=12))
+        self.arabic = Segmented([("pen", tr("Pen (Aref Ruqaa)")), ("same", tr("Same as the font above"))],
+                                d.get("arabic", "pen"))
+        self.arabic.changed.connect(lambda k: self.app.set_writing("arabic", k))
+        col.addWidget(self.arabic)
         self.text_size = SliderRow("Text size", 60, 160, round(100 * float(d.get("text_scale", 1.0))), " %")
         self.text_size.changed.connect(lambda v: self.app.set_writing("text_scale", v / 100))
         col.addWidget(self.text_size)
@@ -832,7 +844,7 @@ class Settings(GlassWindow):
                     group.removeButton(w)
                     w.deleteLater()
         ink = self.app.store.data.get("ink", "auto")
-        choices = [("auto", "Auto")] + [(c, "") for c in self.INKS]
+        choices = [("auto", tr("Auto"))] + [(c, "") for c in self.INKS]
         custom = ink.startswith("#") and ink.upper() not in self.INKS
         choices.append((ink if custom else "pick", "…"))
         for i, (key, text) in enumerate(choices):
@@ -843,9 +855,9 @@ class Settings(GlassWindow):
             if key.startswith("#"):
                 b.setIcon(swatch_icon(QColor(key), 22))
                 b.setIconSize(QSize(22, 22))
-                b.setToolTip(key if key in self.INKS else f"Your colour {key} (click to change)")
+                b.setToolTip(key if key in self.INKS else tr("Your colour {c} (click to change)").format(c=key))
             elif key == "pick":
-                b.setToolTip("Pick any colour")
+                b.setToolTip(tr("Pick any colour"))
             b.setChecked(key.upper() == ink.upper() or (key == "pick" and False))
             b.clicked.connect(lambda _=False, k=key: self._ink(k))
             self.ink_group.addButton(b)
@@ -861,7 +873,7 @@ class Settings(GlassWindow):
             b.setCheckable(True)
             b.setProperty("swatch", True)
             b.setFixedSize(120, 52)
-            pm = QPixmap.fromImage(effect_icon("solid" if key == "auto" else key, name, sample_ink, 112, 44, dpr))
+            pm = QPixmap.fromImage(effect_icon("solid" if key == "auto" else key, tr(name), sample_ink, 112, 44, dpr))
             b.setIcon(QIcon(pm))
             b.setIconSize(QSize(112, 44))
             b.setChecked(key == effect)
@@ -885,7 +897,7 @@ class Settings(GlassWindow):
             self.app.set_writing("ink", key)
         else:
             now = self.app.store.data.get("ink", "auto")
-            color = QColorDialog.getColor(QColor(now if now.startswith("#") else "#3DB2FF"), self, "Ink colour")
+            color = QColorDialog.getColor(QColor(now if now.startswith("#") else "#3DB2FF"), self, tr("Ink colour"))
             if color.isValid():
                 self.app.set_writing("ink", color.name().upper())
         self.fill_writing()
@@ -896,12 +908,17 @@ class Settings(GlassWindow):
         col = QVBoxLayout(page)
         col.setContentsMargins(0, 6, 0, 0)
         col.setSpacing(10)
-        on_top = QCheckBox("Keep the pad on top of other windows (pinned notes always are)")
+        col.addWidget(label("Language", bold=True))
+        language = Segmented([(k, tr(n) if k == "auto" else n) for k, n in LANGS],
+                             self.app.store.data.get("language", "auto"))
+        language.changed.connect(lambda k: QTimer.singleShot(0, lambda: self.app.set_language(k)))
+        col.addWidget(language)
+        on_top = QCheckBox(tr("Keep the pad on top of other windows (pinned notes always are)"))
         on_top.setChecked(self.app.store.data["pad"]["on_top"])
         on_top.toggled.connect(self.app.set_pad_on_top)
         col.addWidget(on_top)
         col.addWidget(label("Wind", bold=True))
-        wind = QCheckBox("Wind blows your pinned notes (glued at the top; they hold still under your mouse)")
+        wind = QCheckBox(tr("Wind blows your pinned notes (glued at the top; they hold still under your mouse)"))
         wind.setChecked(bool(self.app.store.data.get("wind", True)))
         wind.toggled.connect(lambda on: self.app.set_wind(on=on))
         col.addWidget(wind)
@@ -911,11 +928,11 @@ class Settings(GlassWindow):
         col.addWidget(label("Moving notes", bold=True))
         col.addWidget(label("Drag a note by its paper, or double-click it: it follows your mouse without holding "
                             "the button, and lands where you click.", muted=True, size=12))
-        startup = QCheckBox("Start Peelpad when Windows starts")
+        startup = QCheckBox(tr("Start Peelpad when Windows starts"))
         startup.setChecked(self.app.startup_enabled())
         startup.toggled.connect(self.app.set_startup)
         col.addWidget(startup)
-        folder = QPushButton("Open the data folder")
+        folder = QPushButton(tr("Open the data folder"))
         folder.clicked.connect(lambda: subprocess.Popen(["explorer", str(self.app.data_dir)]))
         row = QHBoxLayout()
         row.addWidget(folder)

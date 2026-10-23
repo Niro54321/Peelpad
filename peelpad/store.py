@@ -59,7 +59,8 @@ DEFAULTS = {"version": 1, "skin": "neon", "notes": [], "days": [],
             "wind": True,               # pinned notes sway in the wind
             "wind_speed": 3.6,          # m/s, up to 7.2
             "clock_color": "#FF2B2B",   # the Retro LED clock's digits
-            "weather": {"city": "", "lat": None, "lon": None, "preview": "live"}}   # the Weather look
+            "weather": {"city": "", "lat": None, "lon": None, "preview": "live"},   # the Weather look
+            "language": "auto"}         # auto follows Windows; or en, ar, es, ja, zh
 
 
 class Store:

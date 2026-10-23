@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QButtonGroup, QDialog, QHBoxLayout, QLabel, QPush
                                QVBoxLayout, QWidget)
 
 from peelpad.glassui import HEADER, MARGIN, GlassFrame
+from peelpad.i18n import tr
 from peelpad.theme import app_icon
 
 EDGE = 9  # px either side of the card's border that resize the window
@@ -106,7 +107,7 @@ class GlassWindow(GlassMixin, QWidget):
         self.setup_glass(title, size, minimum)
         minimize = self.frame.close_button(self.showMinimized)
         minimize.setText("–")
-        minimize.setToolTip("Minimise")
+        minimize.setToolTip(tr("Minimise"))
         self.top_bar.addWidget(minimize)
         self.top_bar.addWidget(self.frame.close_button(self.close))
 
@@ -129,7 +130,7 @@ class GlassDialog(GlassMixin, QDialog):
         self.footer.setSpacing(8)
         self.footer_left = QHBoxLayout()
         self.footer.addLayout(self.footer_left, 1)
-        self.cancel_button = QPushButton("Close")
+        self.cancel_button = QPushButton(tr("Close"))
         self.cancel_button.clicked.connect(self.reject)
         self.ok_button = QPushButton(primary)
         self.ok_button.setProperty("primary", True)
@@ -143,7 +144,7 @@ class GlassDialog(GlassMixin, QDialog):
 
 
 def label(text: str = "", muted: bool = False, bold: bool = False, size: int = 13) -> QLabel:
-    w = QLabel(text)
+    w = QLabel(tr(text))
     w.setWordWrap(True)
     style = f"font-size: {size}px;"
     if bold:
@@ -168,7 +169,7 @@ class Segmented(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
         for key, text in options:
-            b = QPushButton(text.replace("&", "&&"))
+            b = QPushButton(tr(text).replace("&", "&&"))
             b.setCheckable(True)
             b.setProperty("segment", True)
             b.clicked.connect(lambda _=False, k=key: self.changed.emit(k))
@@ -196,7 +197,7 @@ class SliderRow(QWidget):
         self.scale, self.suffix = scale, suffix
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
-        self.name = QLabel(name)
+        self.name = QLabel(tr(name))
         self.name.setMinimumWidth(70)
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(int(lo * scale), int(hi * scale))

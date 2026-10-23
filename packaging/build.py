@@ -91,8 +91,11 @@ def notices(target: Path) -> None:
                     dest = licenses / name / Path(f).name
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, dest)
+    (licenses / "Aref Ruqaa").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "peelpad" / "fonts" / "OFL.txt", licenses / "Aref Ruqaa" / "OFL.txt")
     lines += ["",
-              "Qt 6 (inside PySide6) is LGPL-3.0; source: https://download.qt.io/official_releases/qt/"]
+              "Qt 6 (inside PySide6) is LGPL-3.0; source: https://download.qt.io/official_releases/qt/",
+              "Aref Ruqaa font  SIL Open Font License 1.1  https://github.com/alif-type/aref-ruqaa"]
     (target / "THIRD-PARTY-NOTICES.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

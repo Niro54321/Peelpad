@@ -24,6 +24,7 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import (QColor, QFont, QFontDatabase, QImage, QLinearGradient, QPainter, QPainterPath,
                            QPen)
 
+from peelpad.i18n import tr
 from peelpad.store import NEON_COUNT
 
 NEON = [("Lemon", "#F3FF6B"), ("Mango", "#FFD447"), ("Bubblegum", "#FF74C8"), ("Lime", "#CDFF3F")]
@@ -43,6 +44,7 @@ class Writing:
     scale: float = 1.0
     ink: QColor | None = None        # None: the skin's own ink
     effect: str = "auto"             # auto: the skin's own (Neon on the glowing themes)
+    arabic: str = "pen"              # pen: Arabic in Aref Ruqaa, like handwriting; same: the font above
 
 
 WRITING = Writing()
@@ -61,6 +63,19 @@ def row_height(px: int) -> int:
     return round(px * 1.75)
 
 
+FONTS = Path(__file__).resolve().parent / "fonts"
+
+
+@lru_cache(maxsize=1)
+def pen_arabic() -> str:
+    """Aref Ruqaa (SIL Open Font License, in peelpad/fonts): Arabic as written with a pen."""
+    family = ""
+    for f in sorted(FONTS.glob("ArefRuqaa-*.ttf")):
+        found = QFontDatabase.applicationFontFamilies(QFontDatabase.addApplicationFont(str(f)))
+        family = family or (found[0] if found else "")
+    return family
+
+
 @lru_cache(maxsize=1)
 def hand_family() -> str:
     """A handwriting face that ships with Windows; Qt falls back for scripts it lacks."""
@@ -71,9 +86,19 @@ def hand_family() -> str:
     return QFont().family()
 
 
-def hand_font(px: int, done: bool = False) -> QFont:
-    f = QFont(WRITING.family or hand_family())
-    f.setPixelSize(px)
+PEN_SCALE = 1.22      # Ruqʿah letters are small beside Latin ones: Arabic lines are written a bit bigger
+
+
+def hand_font(px: int, done: bool = False, text: str = "") -> QFont:
+    """The writing's font. Letters the font lacks come from the next family: Arabic,
+    when the font has none, from the pen-written Aref Ruqaa."""
+    families = [WRITING.family or hand_family()]
+    pen = WRITING.arabic == "pen" and bool(pen_arabic())
+    if pen:
+        families.append(pen_arabic())
+    f = QFont(families[0])
+    f.setFamilies(families)
+    f.setPixelSize(round(px * PEN_SCALE) if pen and text and right_to_left(text) else px)
     f.setStrikeOut(done)
     return f
 
@@ -409,22 +434,23 @@ def import_skin(source: Path, folder: Path) -> tuple[str, list[str]]:
         shutil.copyfile(source, target)
         notes = []
         if min(skin.frames[0].width(), skin.frames[0].height()) < 300:
-            notes.append(f"It's only {skin.frames[0].width()} x {skin.frames[0].height()} px, so it may look soft.")
+            notes.append(tr("It's only {w} x {h} px, so it may look soft. {best} x {best} px is best.").format(
+                w=skin.frames[0].width(), h=skin.frames[0].height(), best=TEMPLATE))
         if len(skin.frames) >= 150:
-            notes.append("It has a lot of frames; Peelpad plays the first 150.")
+            notes.append(tr("It has a lot of frames; Peelpad plays the first 150."))
         return f"custom:{target.name}", notes
     image = QImage(str(source))
     if image.isNull():
-        raise ValueError("That file isn't a picture Peelpad can read. Use a PNG.")
+        raise ValueError(tr("That file isn't a picture Peelpad can read. Use a PNG."))
     notes = []
     if source.suffix.lower() != ".png" and not image.hasAlphaChannel():
-        notes.append("It has no transparent parts, so the note will be its whole rectangle.")
+        notes.append(tr("It has no transparent parts, so the note will be its whole rectangle."))
     if min(image.width(), image.height()) < 300:
-        notes.append(f"It's only {image.width()} x {image.height()} px, so it may look soft. "
-                     f"{TEMPLATE} x {TEMPLATE} px is best.")
+        notes.append(tr("It's only {w} x {h} px, so it may look soft. {best} x {best} px is best.").format(
+            w=image.width(), h=image.height(), best=TEMPLATE))
     ratio = image.width() / image.height()
     if not 0.5 <= ratio <= 2:
-        notes.append("It's very long or very tall; new notes will take that shape.")
+        notes.append(tr("It's very long or very tall; new notes will take that shape."))
     folder.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha1(source.read_bytes()).hexdigest()[:8]
     stem = "".join(c if c.isalnum() or c in "-_ " else "_" for c in source.stem).strip() or "skin"
@@ -432,9 +458,9 @@ def import_skin(source: Path, folder: Path) -> tuple[str, list[str]]:
     if source.suffix.lower() == ".png":
         shutil.copyfile(source, target)
     elif not image.save(str(target), "PNG"):
-        raise ValueError("Couldn't save the skin.")
+        raise ValueError(tr("Couldn't save the skin."))
     if clear_fake_background(target):
-        notes.append("Its checkerboard background was painted in, not transparent; Peelpad removed it.")
+        notes.append(tr("Its checkerboard background was painted in, not transparent; Peelpad removed it."))
     return f"custom:{target.name}", notes
 
 
@@ -536,7 +562,8 @@ def paint_rows(p: QPainter, note: dict, skin: Skin, w: float, h: float, alpha: f
         if row["text"].strip():
             _draw_check(p, box, ink, row["kind"], row["done"])
         text_rect = QRectF(box.right() + gap + 2, y, area.right() - box.right() - gap - 4, rh)
-        draw_text(p, text_rect, row["text"], hand_font(px), ink, effect, right_to_left(row["text"]), row["done"])
+        draw_text(p, text_rect, row["text"], hand_font(px, text=row["text"]), ink, effect, right_to_left(row["text"]),
+                  row["done"])
         y += rh
 
 

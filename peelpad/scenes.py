@@ -23,6 +23,7 @@ from PySide6.QtGui import (QColor, QFont, QImage, QLinearGradient, QPainter, QPa
 
 from peelpad.animated import Backdrop, now_ms
 from peelpad.effects import hue_shift
+from peelpad.i18n import tr
 from peelpad.skins import Skin, cover_with_paper
 
 
@@ -1036,7 +1037,7 @@ class WeatherSky(Scene):
         f.setPixelSize(max(7, round(s * 0.042)))
         f.setBold(True)
         p.setFont(f)
-        text = weather.LABELS[state]
+        text = tr(weather.LABELS[state])
         if weather.Now.preview == "live" and weather.Now.temp is not None:
             text = f"{round(weather.Now.temp)}°  {text}"
         if weather.Now.preview == "live" and weather.Now.place:

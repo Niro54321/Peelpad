@@ -12,6 +12,7 @@ from PySide6.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QApplication, QMenu, QToolTip
 
 from peelpad import store
+from peelpad.i18n import tr
 from peelpad.note import MARGIN, Paper, paper_image, round_button, shadow_image
 from peelpad.skins import GLUE, TEMPLATE, LiveTexture
 from peelpad.stage import PeelActor
@@ -39,10 +40,15 @@ class Pad(Paper):
         self.click_timer.timeout.connect(self.editor.focus_end)
         self._layers: dict = {}
         self.editor.submit.connect(self.auto_peel)
-        self.buttons = [round_button(self, "⚙", "Settings, stats and history", app.show_settings),
-                        round_button(self, "–", "Minimise to the taskbar", self.showMinimized)]
+        self.buttons = [round_button(self, "⚙", tr("Settings, stats and history"), app.show_settings),
+                        round_button(self, "–", tr("Minimise to the taskbar"), self.showMinimized)]
         self.resize_for_skin()
         self.set_on_top(app.store.data["pad"]["on_top"])
+
+    def retranslate(self) -> None:
+        self.buttons[0].setToolTip(tr("Settings, stats and history"))
+        self.buttons[1].setToolTip(tr("Minimise to the taskbar"))
+        self.editor.retranslate()
 
     # geometry
     def paper_size(self) -> tuple[int, int]:
@@ -171,7 +177,7 @@ class Pad(Paper):
         self.press = None
         if not store.has_content(self.note):
             self.wiggle()
-            QToolTip.showText(QCursor.pos(), "Write something on it first", self)
+            QToolTip.showText(QCursor.pos(), tr("Write something on it first"), self)
             return
         self.start_peel(QPointF(self.geometry().topLeft()) + start)
         self.actor.move(g)
@@ -276,14 +282,14 @@ class Pad(Paper):
 
     def menu(self, at) -> None:
         m = QMenu(self)
-        m.addAction("Settings && stats", self.app.show_settings)
-        top = m.addAction("Keep the pad on top")
+        m.addAction(tr("Settings && stats"), self.app.show_settings)
+        top = m.addAction(tr("Keep the pad on top"))
         top.setCheckable(True)
         top.setChecked(self.app.store.data["pad"]["on_top"])
         top.toggled.connect(self.app.set_pad_on_top)
-        m.addAction("Hide the pad", self.hide)
+        m.addAction(tr("Hide the pad"), self.hide)
         m.addSeparator()
-        m.addAction("Quit Peelpad", self.app.quit)
+        m.addAction(tr("Quit Peelpad"), self.app.quit)
         m.exec(at)
 
     def wheelEvent(self, event):

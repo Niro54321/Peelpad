@@ -585,3 +585,51 @@ def test_arcade_chomper_eats_the_dots_and_they_come_back():
                    for i in range(arc.PELLETS))
     early, late, next_lap = lit_dots(0.5), lit_dots(arc.LOOP * 0.8), lit_dots(arc.LOOP * 1.05)
     assert early > late and next_lap > late
+
+
+def test_the_row_you_type_in_follows_a_new_ink():
+    from peelpad.editor import TaskEditor
+
+    note = note_with("Hello")
+    ed = TaskEditor()
+    ed.resize(300, 200)
+    ed.bind(note, QColor("#B26BFF"), 20)
+    ed.set_look(QColor("#000000"), 20)
+    img = ed.rows[0][2].grab().toImage()
+    pixels = [img.pixelColor(x, y) for x in range(img.width()) for y in range(img.height())]
+    assert not any(c.blue() > 150 and c.red() > 120 and c.green() < 160 and c.alpha() > 200 for c in pixels)
+    assert any(c.red() + c.green() + c.blue() < 120 and c.alpha() > 200 for c in pixels)
+
+
+def test_arabic_is_written_with_the_pen_font():
+    font = skins.hand_font(20, text="اشترِ الحليب")
+    assert skins.pen_arabic() in font.families() and font.pixelSize() > 20
+    assert skins.hand_font(20, text="Buy milk").pixelSize() == 20
+    try:
+        skins.WRITING.arabic = "same"
+        assert skins.pen_arabic() not in skins.hand_font(20, text="اشترِ").families()
+    finally:
+        skins.WRITING.arabic = "pen"
+
+
+def test_every_language_has_every_line():
+    import string
+
+    from peelpad import i18n
+
+    names = {f[1] for k in i18n.T for f in string.Formatter().parse(k) if f[1]}
+    assert names <= {"p", "n", "day", "c", "city", "weather", "night", "time", "w", "h", "best",
+                     "size", "safe_w", "safe_h", "side", "glue"}
+    for key, row in i18n.T.items():
+        assert len(row) == 4 and all(row)
+        want = {f[1] for f in string.Formatter().parse(key) if f[1]}
+        assert all({f[1] for f in string.Formatter().parse(t) if f[1]} == want for t in row), key
+    try:
+        for code, word in (("ar", "الإحصائيات"), ("es", "Estadísticas"), ("ja", "統計"), ("zh", "统计"), ("en", "Stats")):
+            i18n.set_language(code)
+            assert i18n.tr("Stats") == word
+        assert i18n.tr("a line nobody translated") == "a line nobody translated"
+        i18n.set_language("ar")
+        assert i18n.right_to_left() and len(i18n.weekday_names()) == 7
+    finally:
+        i18n.set_language("en")

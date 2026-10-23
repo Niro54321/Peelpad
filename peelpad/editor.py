@@ -8,12 +8,17 @@ The editor writes straight into the note's dict.
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPalette
+from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtWidgets import QAbstractButton, QFrame, QHBoxLayout, QLineEdit, QScrollArea, QVBoxLayout, QWidget
 
 from peelpad import store
+from peelpad.i18n import tr
 from peelpad.effects import draw_text
 from peelpad.skins import _draw_check, bloom, check_box, hand_font, right_to_left, row_height
+
+
+def _css(c: QColor) -> str:
+    return f"rgba({c.red()},{c.green()},{c.blue()},{c.alpha()})"
 
 
 class Sheet(QWidget):
@@ -61,7 +66,7 @@ class Check(QAbstractButton):
         self.setCheckable(True)
         self.setChecked(row["done"])
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Check it off · right-click: plain line / task")
+        self.setToolTip(tr("Check it off · right-click: plain line / task"))
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     def paintEvent(self, event):
@@ -96,6 +101,13 @@ class RowEdit(QLineEdit):
         self.setFrame(False)
         self.setMaxLength(400)
         self.textChanged.connect(lambda _: editor.inner.stale())
+        self.textEdited.connect(self._direction)
+
+    def _direction(self, text: str) -> None:
+        """Arabic in the pen font is written a little bigger: follow the line as it changes."""
+        font = hand_font(self.editor.px, self.row["done"], text)
+        if font.pixelSize() != self.font().pixelSize():
+            self.setFont(font)
 
     def paintEvent(self, event):
         # Toon, Pop, Gummy... are drawn by hand; while you type a row it is plain ink, with its cursor
@@ -105,7 +117,7 @@ class RowEdit(QLineEdit):
             return
         p = QPainter(self)
         rect = QRectF(self.rect()).adjusted(2, 0, -2, 0)
-        draw_text(p, rect, self.text(), hand_font(ed.px), ed.ink, ed.effect, right_to_left(self.text()),
+        draw_text(p, rect, self.text(), hand_font(ed.px, text=self.text()), ed.ink, ed.effect, right_to_left(self.text()),
                   self.row["done"])
         p.end()
 
@@ -153,6 +165,7 @@ class TaskEditor(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setWidgetResizable(True)
+        self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         self.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }")
         self.viewport().setAutoFillBackground(False)
         self.inner = Sheet(self)
@@ -219,6 +232,11 @@ class TaskEditor(QScrollArea):
             self.ensureWidgetVisible(edit, 0, 4)
         return handler
 
+    def retranslate(self) -> None:
+        for _, check, _ in self.rows:
+            check.setToolTip(tr("Check it off · right-click: plain line / task"))
+        self.restyle()
+
     def restyle(self) -> None:
         rh = row_height(self.px)
         placeholder = QColor(self.ink)
@@ -229,21 +247,19 @@ class TaskEditor(QScrollArea):
             line = holder.layout()
             line.setSpacing(round(self.px * 0.5))
             done = check.row["done"]
-            edit.setFont(hand_font(self.px, done))
+            edit.setFont(hand_font(self.px, done, edit.text()))
             ink = QColor(self.ink)
             if done:
                 ink.setAlphaF(0.55)
-            pal = edit.palette()
-            pal.setColor(QPalette.ColorRole.Text, ink)
-            pal.setColor(QPalette.ColorRole.PlaceholderText, placeholder)
-            pal.setColor(QPalette.ColorRole.Base, QColor(0, 0, 0, 0))
             sel = QColor(self.ink)
             sel.setAlphaF(0.18)
-            pal.setColor(QPalette.ColorRole.Highlight, sel)
-            pal.setColor(QPalette.ColorRole.HighlightedText, ink)
-            edit.setPalette(pal)
-            edit.setStyleSheet("QLineEdit { background: transparent; border: none; padding: 0; }")
-            edit.setPlaceholderText("Write a task…" if i == 0 and len(self.rows) == 1 else "")
+            # the colours live in the style sheet itself: it changes with the ink, so the row
+            # you are typing in follows a new ink too (a palette under a fixed sheet would not)
+            edit.setStyleSheet(
+                "QLineEdit { background: transparent; border: none; padding: 0; "
+                f"color: {_css(ink)}; placeholder-text-color: {_css(placeholder)}; "
+                f"selection-background-color: {_css(sel)}; selection-color: {_css(ink)}; }}")
+            edit.setPlaceholderText(tr("Write a task…") if i == 0 and len(self.rows) == 1 else "")
             check.update()
         self.column.setContentsMargins(*(round(self.px * 0.7),) * 4)
         self.inner.stale()

@@ -5,11 +5,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QPointF, QRectF, QTimer
+from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QGuiApplication
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from peelpad.i18n import tr
 from peelpad.note import NoteWindow
 from peelpad import skins
 from peelpad.skins import DARK_INK, LIGHT_INK, note_images, skin_for
@@ -30,6 +31,7 @@ class App(QObject):
         self.skins_dir = self.data_dir / "skins"
         self.skins_dir.mkdir(exist_ok=True)
         self.store = Store(self.data_dir / "notes.json")
+        self._language()
         self._check_skins()
         self.skin = skin_for(self.store.data["skin"], self.skins_dir, self.store.data["mine"], self.store.data["areas"])
         if self.skin.key != self.store.data["skin"]:
@@ -60,6 +62,30 @@ class App(QObject):
         self.store.wrote()
         self.changed()
 
+    def _language(self) -> None:
+        """Windows' language, or the one picked in Settings; Arabic lays windows out right to left."""
+        from peelpad import i18n
+
+        i18n.set_language(self.store.data.get("language", "auto"))
+        self.qapp.setLayoutDirection(Qt.LayoutDirection.RightToLeft if i18n.right_to_left()
+                                     else Qt.LayoutDirection.LeftToRight)
+
+    def set_language(self, choice: str) -> None:
+        self.store.data["language"] = choice
+        self._language()
+        self.changed()
+        self._tray_menu()
+        self.pad.retranslate()
+        for win in self.windows.values():
+            win.retranslate()
+        if self.settings is not None:              # build Settings again, in the new language
+            old, self.settings = self.settings, None
+            geometry = old.geometry()
+            old.hide()
+            old.deleteLater()
+            self.show_settings("general")
+            self.settings.setGeometry(geometry)
+
     def _check_skins(self) -> None:
         """Skins uploaded before Peelpad could remove a painted-in checkerboard: check them once."""
         checked = self.store.data["checked_skins"]
@@ -81,6 +107,7 @@ class App(QObject):
             d["effect"] = {"on": "neon", "off": "solid"}.get(d.pop("glow", "auto"), "auto")
         skins.WRITING.effect = d["effect"]
         skins.WRITING.family = d.get("font", "")
+        skins.WRITING.arabic = d.get("arabic", "pen")
         from peelpad.scenes import LED
 
         LED.color = QColor(d.get("clock_color", "#FF2B2B"))
@@ -233,7 +260,7 @@ class App(QObject):
 
     def set_weather_city(self, city: str) -> None:
         if city.strip():
-            self.weather_note = "Looking for it…"
+            self.weather_note = tr("Looking for it…")
             self.fetcher.find(city)
             if self.settings:
                 self.settings.fill_weather()
@@ -248,7 +275,7 @@ class App(QObject):
         from peelpad import weather
 
         if place is None:
-            self.weather_note = "Couldn't find that city. Try its English name."
+            self.weather_note = tr("Couldn't find that city. Try its English name.")
         else:
             w = self.store.data["weather"]
             w.update(city=place["city"], lat=place["lat"], lon=place["lon"])
@@ -270,7 +297,7 @@ class App(QObject):
             self.settings.fill_weather()
 
     def _weather_failed(self, why: str) -> None:
-        self.weather_note = "Couldn't reach the weather service (no internet?). Peelpad tries again later."
+        self.weather_note = tr("Couldn't reach the weather service (no internet?). Peelpad tries again later.")
         if self.settings:
             self.settings.fill_weather()
 
@@ -366,21 +393,24 @@ class App(QObject):
     def _tray(self) -> None:
         self.tray = QSystemTrayIcon(app_icon(), self)
         self.tray.setToolTip("Peelpad")
-        menu = QMenu()
-        for text, slot in (("Show the pad", self.show_pad), ("Settings && stats", self.show_settings)):
-            act = QAction(text, menu)
-            act.triggered.connect(lambda _=False, s=slot: s())
-            menu.addAction(act)
-        menu.addSeparator()
-        quit_act = QAction("Quit Peelpad", menu)
-        quit_act.triggered.connect(self.quit)
-        menu.addAction(quit_act)
-        self.tray_menu = menu
-        self.tray.setContextMenu(menu)
+        self._tray_menu()
         self.tray.activated.connect(
             lambda reason: self.show_pad() if reason in (QSystemTrayIcon.ActivationReason.Trigger,
                                                          QSystemTrayIcon.ActivationReason.DoubleClick) else None)
         self.tray.show()
+
+    def _tray_menu(self) -> None:
+        menu = QMenu()
+        for text, slot in (("Show the pad", self.show_pad), ("Settings && stats", self.show_settings)):
+            act = QAction(tr(text), menu)
+            act.triggered.connect(lambda _=False, s=slot: s())
+            menu.addAction(act)
+        menu.addSeparator()
+        quit_act = QAction(tr("Quit Peelpad"), menu)
+        quit_act.triggered.connect(self.quit)
+        menu.addAction(quit_act)
+        self.tray_menu = menu
+        self.tray.setContextMenu(menu)
 
     def quit(self) -> None:
         self.stages.clear()

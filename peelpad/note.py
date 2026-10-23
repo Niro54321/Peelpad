@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
 from peelpad import physics, store
 from peelpad.editor import TaskEditor
+from peelpad.i18n import tr
 from peelpad.skins import (GLUE, NEON, TEMPLATE, PictureSkin, Skin, font_px, safe_rect, text_effect,
                            writing_colors, writing_layer, LiveTexture)
 
@@ -226,10 +227,10 @@ class NoteWindow(Paper):
         self.save_timer.setSingleShot(True)
         self.save_timer.setInterval(300)
         self.save_timer.timeout.connect(self._save_rect)
-        self.size_button = round_button(self, "↕", "Resize: drag the handles, then press ✓", self.toggle_sizing)
-        self.done_button = round_button(self, "✓", "Done: crumple it", self.done)
-        self.color_button = round_button(self, "●", "Next colour", self.next_color)
-        self.away_button = round_button(self, "✕", "Throw it away", self.throw_away)
+        self.size_button = round_button(self, "↕", tr("Resize: drag the handles, then press ✓"), self.toggle_sizing)
+        self.done_button = round_button(self, "✓", tr("Done: crumple it"), self.done)
+        self.color_button = round_button(self, "●", tr("Next colour"), self.next_color)
+        self.away_button = round_button(self, "✕", tr("Throw it away"), self.throw_away)
         self.buttons = [self.size_button, self.done_button, self.color_button, self.away_button]
         self.confirm_timer = QTimer(self)
         self.confirm_timer.setSingleShot(True)
@@ -260,6 +261,13 @@ class NoteWindow(Paper):
     def global_paper(self) -> QRectF:
         return self.paper_rect().translated(QPointF(self.geometry().topLeft()))
 
+    def retranslate(self) -> None:
+        self.done_button.setToolTip(tr("Done: crumple it"))
+        self.color_button.setToolTip(tr("Next colour"))
+        self.away_button.setToolTip(tr("Throw it away"))
+        self.editor.retranslate()
+        self.refresh_look()
+
     def place_at(self, paper: QRectF) -> None:
         self.setGeometry(round(paper.x() - MARGIN), round(paper.y() - MARGIN),
                          round(paper.width() + 2 * MARGIN), round(paper.height() + 2 * MARGIN + BAR))
@@ -269,7 +277,7 @@ class NoteWindow(Paper):
         for b in (self.done_button, self.away_button):
             b.setProperty("wanted", not self.sizing)
         self.size_button.setText("✓" if self.sizing else "↕")
-        self.size_button.setToolTip("Keep this size" if self.sizing else "Resize: drag the handles, then press ✓")
+        self.size_button.setToolTip(tr("Keep this size") if self.sizing else tr("Resize: drag the handles, then press ✓"))
         self.size_button.setProperty("on", self.sizing)
         self.size_button.style().unpolish(self.size_button)
         self.size_button.style().polish(self.size_button)
@@ -525,7 +533,7 @@ class NoteWindow(Paper):
         b = self.away_button
         if store.tasks(self.note) and not store.is_complete(self.note) and b.text() == "✕":
             b.setText("?")
-            b.setToolTip("Click again to throw it away")
+            b.setToolTip(tr("Click again to throw it away"))
             self.confirm_timer.start()
             return
         self.app.crumple(self, finished=False)

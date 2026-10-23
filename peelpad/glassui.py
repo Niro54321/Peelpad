@@ -236,10 +236,14 @@ class GlassFrame(QObject):
         p.setPen(thin_pen(look.outline, 1))
         p.drawRoundedRect(card.adjusted(-0.5, -0.5, 0.5, 0.5), RADIUS, RADIUS)
 
-        draw_mark(p, QRectF(card.left() + 18, card.top() + 15, 24, 24))
+        # the mark and the title sit at the start of the header: the right, for right-to-left languages
+        rtl = self.widget.layoutDirection() == Qt.LayoutDirection.RightToLeft
+        draw_mark(p, QRectF(card.right() - 42 if rtl else card.left() + 18, card.top() + 15, 24, 24))
         font = QFont(self.widget.font())
         font.setPixelSize(16)
         font.setWeight(QFont.Weight.Bold)
         p.setFont(font)
-        soft_text(p, QRectF(card.left() + 50, card.top() + 12, card.width() - 110, 30), self.title,
-                  look.text, look.text_shadow, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        side = Qt.AlignmentFlag.AlignRight if rtl else Qt.AlignmentFlag.AlignLeft
+        title = QRectF(card.left() + 60, card.top() + 12, card.width() - 110, 30) if rtl else             QRectF(card.left() + 50, card.top() + 12, card.width() - 110, 30)
+        soft_text(p, title, self.title, look.text, look.text_shadow,
+                  side | Qt.AlignmentFlag.AlignAbsolute | Qt.AlignmentFlag.AlignVCenter)
