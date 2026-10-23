@@ -9,8 +9,8 @@ import subprocess
 from datetime import date, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QFileDialog, QFontComboBox, QGridLayout,
                                QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QStackedWidget,
                                QVBoxLayout, QWidget)
@@ -161,6 +161,111 @@ class MonthView(QWidget):
                 self.update()
                 self.picked.emit(self.selected)
                 return
+
+
+class AreaEditor(QWidget):
+    """The current look with its text box: drag the box to move it, its corners to resize it."""
+
+    moved = Signal(tuple)
+    MIN = 0.12
+
+    def __init__(self):
+        super().__init__()
+        self.setMinimumSize(250, 250)
+        self.setMouseTracking(True)
+        self.paper: QImage | None = None
+        self.aspect = 1.0
+        self.area = (0.1, 0.16, 0.9, 0.9)
+        self.drag = None
+
+    def set_skin(self, skin) -> None:
+        self.aspect = skin.aspect or 1.0
+        h = 500
+        img = QImage(round(h * self.aspect), h, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(Qt.GlobalColor.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        skin.paint_front(p, img.width(), img.height(), 0)
+        p.end()
+        self.paper, self.area = img, tuple(skin.area)
+        self.update()
+
+    def _frame(self) -> QRectF:
+        side = min(self.width() - 8, self.height() - 8)
+        w, h = (side, side / self.aspect) if self.aspect >= 1 else (side * self.aspect, side)
+        return QRectF((self.width() - w) / 2, (self.height() - h) / 2, w, h)
+
+    def _box(self) -> QRectF:
+        f, (l, t, r, b) = self._frame(), self.area
+        return QRectF(f.left() + l * f.width(), f.top() + t * f.height(), (r - l) * f.width(), (b - t) * f.height())
+
+    def _corners(self) -> dict:
+        b = self._box()
+        return {"tl": b.topLeft(), "tr": b.topRight(), "bl": b.bottomLeft(), "br": b.bottomRight()}
+
+    def _corner_at(self, pos: QPointF):
+        return next((k for k, c in self._corners().items() if (c - pos).manhattanLength() < 14), None)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        f, box = self._frame(), self._box()
+        if self.paper is not None:
+            p.drawImage(f, self.paper)
+        outside = QPainterPath()
+        outside.addRect(f)
+        hole = QPainterPath()
+        hole.addRect(box)
+        p.fillPath(outside.subtracted(hole), QColor(0, 0, 0, 70))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor("#FF4FA8"), 2, Qt.PenStyle.DashLine))
+        p.drawRect(box)
+        p.setPen(QColor("#FF4FA8"))
+        p.drawText(box.adjusted(6, 4, -4, -4), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, "☐ Your tasks here")
+        p.setPen(QPen(QColor("white"), 1.5))
+        p.setBrush(QColor("#FF4FA8"))
+        for c in self._corners().values():
+            p.drawEllipse(c, 6, 6)
+        p.end()
+
+    def mousePressEvent(self, event):
+        pos = event.position()
+        corner = self._corner_at(pos)
+        if corner or self._box().contains(pos):
+            self.drag = (corner or "move", pos, self.area)
+
+    def mouseMoveEvent(self, event):
+        pos = event.position()
+        if not self.drag:
+            corner = self._corner_at(pos)
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor if corner in ("tl", "br") else
+                           Qt.CursorShape.SizeBDiagCursor if corner else
+                           Qt.CursorShape.SizeAllCursor if self._box().contains(pos) else Qt.CursorShape.ArrowCursor)
+            return
+        kind, start, (l, t, r, b) = self.drag
+        f = self._frame()
+        dx, dy = (pos.x() - start.x()) / f.width(), (pos.y() - start.y()) / f.height()
+        if kind == "move":
+            dx = min(max(dx, -l), 1 - r)
+            dy = min(max(dy, -t), 1 - b)
+            l, r, t, b = l + dx, r + dx, t + dy, b + dy
+        else:
+            if "l" in kind:
+                l = min(max(0.0, l + dx), r - self.MIN)
+            else:
+                r = max(min(1.0, r + dx), l + self.MIN)
+            if "t" in kind:
+                t = min(max(0.0, t + dy), b - self.MIN)
+            else:
+                b = max(min(1.0, b + dy), t + self.MIN)
+        self.area = (l, t, r, b)
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if self.drag:
+            self.drag = None
+            self.moved.emit(self.area)
 
 
 def card(number: str, caption: str) -> tuple[QWidget, QLabel]:
@@ -345,6 +450,23 @@ class Settings(GlassWindow):
         self.skin_group = QButtonGroup(self)
         self.skin_group.setExclusive(True)
 
+        col.addWidget(label("Text box", bold=True))
+        col.addWidget(label("Where the writing goes on this look. Drag the box to move it, drag its corners to "
+                            "make it bigger or smaller. Peelpad finds the calm middle of your own pictures by itself.",
+                            muted=True, size=12))
+        row = QHBoxLayout()
+        self.area_editor = AreaEditor()
+        self.area_editor.moved.connect(lambda area: self.app.set_area(self.app.skin.key, area))
+        auto = QPushButton("Auto")
+        auto.setToolTip("Put the text box back where Peelpad would put it")
+        auto.clicked.connect(lambda: self.app.set_area(self.app.skin.key, None))
+        row.addWidget(self.area_editor, 1)
+        side = QVBoxLayout()
+        side.addWidget(auto)
+        side.addStretch(1)
+        row.addLayout(side)
+        col.addLayout(row)
+
         col.addWidget(label("Your colours", bold=True))
         mine = QHBoxLayout()
         self.paper_button = QPushButton("Paper colour…")
@@ -365,9 +487,9 @@ class Settings(GlassWindow):
         self.size_slider = SliderRow("Pad sheets", 140, 640, self.app.store.data.get("note_size", 300), " px")
         self.size_slider.changed.connect(lambda v: self.app.set_note_size(round(v)))
         col.addWidget(self.size_slider)
-        col.addWidget(label("Pinned notes can be any size: drag a note's bottom-right corner (hold Shift to "
-                            "keep its shape), or hold Ctrl and turn the mouse wheel over it. Ctrl + wheel over "
-                            "the pad changes the size of its sheets.", muted=True, size=12))
+        col.addWidget(label("Pinned notes can be any size: press ↕ under a note, drag its handles (hold Shift to "
+                            "keep its shape), then press ✓. Or hold Ctrl and turn the mouse wheel over it. "
+                            "Ctrl + wheel over the pad changes the size of its sheets.", muted=True, size=12))
 
         col.addWidget(label("Your own skin", bold=True))
         row = QHBoxLayout()
@@ -448,6 +570,7 @@ class Settings(GlassWindow):
             self.skin_group.addButton(b)
             self.skin_grid.addWidget(b, i // 6, i % 6)
         self.remove_button.setVisible(current.startswith("custom:"))
+        self.area_editor.set_skin(self.app.skin)
         self.frame.style_children()
 
     def upload(self) -> None:
@@ -565,9 +688,12 @@ class Settings(GlassWindow):
             "or pull it away to lift it, until it tears off. Drop it anywhere: it stays pinned on top.<br>"
             "• <b>Ctrl+Enter</b> peels the sheet off for you.<br>"
             "• Right-click a check box to make that row a plain line.<br>"
-            "• Drag a pinned note by its paper. Resize it from the bottom-right corner, or with Ctrl + mouse wheel.<br>"
+            "• Drag a pinned note by its paper: it swings like a real sheet. To resize it press ↕ under it, "
+            "drag the handles, then ✓. Or Ctrl + mouse wheel.<br>"
             "• Check off every task and the note crumples away. ✓ finishes it by hand, ✕ throws it away.<br>"
-            "• Close the pad and Peelpad keeps running in the tray.", size=12)
+            "• – minimises the pad to the taskbar. Peelpad also lives in the tray: right-click it to quit.<br>"
+            "• Everything you write stays on this PC only, in the data folder above. Nothing is sent anywhere.",
+            size=12)
         help_text.setTextFormat(Qt.TextFormat.RichText)
         col.addWidget(help_text)
         col.addStretch(1)

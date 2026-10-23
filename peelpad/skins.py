@@ -47,8 +47,9 @@ class Writing:
 WRITING = Writing()
 
 
-def safe_rect(w: float, h: float) -> QRectF:
-    return QRectF(w * SAFE[0], h * SAFE[1], w * (SAFE[2] - SAFE[0]), h * (SAFE[3] - SAFE[1]))
+def safe_rect(w: float, h: float, area: tuple = SAFE) -> QRectF:
+    """Where the writing goes, for a note w x h. `area` is (left, top, right, bottom) as fractions."""
+    return QRectF(w * area[0], h * area[1], w * (area[2] - area[0]), h * (area[3] - area[1]))
 
 
 def font_px(w: float) -> int:
@@ -100,6 +101,8 @@ class Skin:
     name = "Neon (a new colour each sheet)"
     aspect: float | None = None          # width / height of a picture skin
     glow = False                         # the ink shines
+    area: tuple = SAFE                   # the text box (fractions); you can move it in Settings
+    auto_area: tuple = SAFE              # where Peelpad would put it
 
     def __init__(self, cycle: bool = True, solid: int = 0):
         self.cycle, self.solid = cycle, solid
@@ -178,7 +181,8 @@ class PictureSkin(Skin):
         if self.image.isNull():
             raise ValueError(f"Can't read {self.path.name}")
         self.aspect = self.image.width() / self.image.height()
-        self._ink = ink_for(self.image)
+        self.area = self.auto_area = detect_area(self.image)
+        self._ink = ink_for(self.image, self.area)
 
     def ink(self, color: int) -> QColor:
         return self._ink
@@ -193,11 +197,54 @@ class PictureSkin(Skin):
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
 
 
-def ink_for(image: QImage) -> QColor:
-    """Dark ink on a light safe area, light ink on a dark one."""
+def detect_area(image: QImage) -> tuple:
+    """Find the calm middle of a picture, where text fits: walk out from the centre
+    along a few rows and columns until the colour changes or the picture ends.
+    A frame gets its inside, a round sticker its middle; a busy picture the default."""
+    n = 160
+    small = image.scaled(n, n, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    middle = small.pixelColor(n // 2, n // 2)
+    if middle.alpha() < 200:
+        return SAFE
+
+    def same(x: int, y: int) -> bool:
+        c = small.pixelColor(x, y)
+        return c.alpha() > 200 and (abs(c.red() - middle.red()) + abs(c.green() - middle.green())
+                                    + abs(c.blue() - middle.blue())) < 70
+
+    lefts, rights, tops, bottoms = [], [], [], []
+    for off in (-n // 5, -n // 10, 0, n // 10, n // 5):
+        row, col = n // 2 + off, n // 2 + off
+        x = n // 2
+        while x > 0 and same(x - 1, row):
+            x -= 1
+        lefts.append(x)
+        x = n // 2
+        while x < n - 1 and same(x + 1, row):
+            x += 1
+        rights.append(x + 1)
+        y = n // 2
+        while y > 0 and same(col, y - 1):
+            y -= 1
+        tops.append(y)
+        y = n // 2
+        while y < n - 1 and same(col, y + 1):
+            y += 1
+        bottoms.append(y + 1)
+    left, right = sorted(lefts)[-2] / n, sorted(rights)[1] / n         # ignore one stray row
+    top, bottom = sorted(tops)[-2] / n, sorted(bottoms)[1] / n
+    inset_x, inset_y = (right - left) * 0.07, (bottom - top) * 0.07
+    left, right, top, bottom = left + inset_x, right - inset_x, top + inset_y, bottom - inset_y
+    if right - left < 0.3 or bottom - top < 0.25:
+        return SAFE
+    return round(left, 3), round(top, 3), round(right, 3), round(bottom, 3)
+
+
+def ink_for(image: QImage, area: tuple = SAFE) -> QColor:
+    """Dark ink on a light text area, light ink on a dark one."""
     small = image.scaled(60, 60, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
-    x0, y0 = round(60 * SAFE[0]), round(60 * SAFE[1])
-    x1, y1 = round(60 * SAFE[2]), round(60 * SAFE[3])
+    x0, y0 = round(60 * area[0]), round(60 * area[1])
+    x1, y1 = round(60 * area[2]), round(60 * area[3])
     total = weight = 0.0
     for y in range(y0, y1):
         for x in range(x0, x1):
@@ -233,7 +280,15 @@ def all_skins(folder: Path, mine: dict | None = None) -> list[Skin]:
     return skins
 
 
-def skin_for(key: str, folder: Path, mine: dict | None = None) -> Skin:
+def skin_for(key: str, folder: Path, mine: dict | None = None, areas: dict | None = None) -> Skin:
+    skin = _skin_for(key, folder, mine)
+    area = (areas or {}).get(skin.key)
+    if area and len(area) == 4:
+        skin.area = tuple(area)
+    return skin
+
+
+def _skin_for(key: str, folder: Path, mine: dict | None = None) -> Skin:
     if key.startswith("solid:"):
         try:
             return Skin(cycle=False, solid=int(key[6:]) % NEON_COUNT)
@@ -251,6 +306,53 @@ def skin_for(key: str, folder: Path, mine: dict | None = None) -> Skin:
     return Skin()
 
 
+def _pil(image: QImage):
+    from PIL import Image
+
+    rgba = image.convertToFormat(QImage.Format.Format_RGBA8888)
+    return Image.frombuffer("RGBA", (rgba.width(), rgba.height()), bytes(rgba.constBits()), "raw", "RGBA",
+                            rgba.bytesPerLine(), 1).copy()
+
+
+def clear_fake_background(path: Path) -> bool:
+    """Many "transparent" PNGs online have the grey-and-white checkerboard painted
+    in. If the picture's border is such a checkerboard, make it truly see-through
+    (only what is joined to the border, so a white middle stays). True if it did."""
+    from PIL import Image, ImageChops, ImageDraw, ImageFilter
+
+    img = Image.open(path).convert("RGBA")
+    w, h = img.size
+    light = img.convert("L")
+    grey = ImageChops.subtract(img.convert("RGB").convert("HSV").getchannel("S"), Image.new("L", img.size, 0))
+    candidate = ImageChops.multiply(light.point(lambda v: 255 if v >= 180 else 0),
+                                    grey.point(lambda v: 255 if v <= 22 else 0))
+    alpha = img.getchannel("A")
+    candidate = ImageChops.multiply(candidate, alpha.point(lambda v: 255 if v > 200 else 0))
+    # is the border a checkerboard: two tones, both common?
+    edge = [(x, y) for x in range(0, w, max(1, w // 120)) for y in (0, 1, h - 2, h - 1)]
+    edge += [(x, y) for y in range(0, h, max(1, h // 120)) for x in (0, 1, w - 2, w - 1)]
+    tones = [light.getpixel(p) for p in edge if candidate.getpixel(p)]
+    if len(tones) < len(edge) * 0.8:
+        return False
+    bright = sum(t >= 245 for t in tones)
+    if not (0.15 < bright / len(tones) < 0.85):
+        return False
+    # flood the checkerboard in from the border, on a small copy, then apply it at full size
+    k = max(1, max(w, h) // 360)
+    small = candidate.resize((w // k, h // k), Image.Resampling.NEAREST)
+    sw, sh = small.size
+    for x, y in [(x, 0) for x in range(sw)] + [(x, sh - 1) for x in range(sw)] + \
+                [(0, y) for y in range(sh)] + [(sw - 1, y) for y in range(sh)]:
+        if small.getpixel((x, y)) == 255:
+            ImageDraw.floodfill(small, (x, y), 128)
+    flooded = small.point(lambda v: 255 if v == 128 else 0).resize((w, h), Image.Resampling.NEAREST)
+    flooded = flooded.filter(ImageFilter.MaxFilter(3))
+    gone = ImageChops.multiply(flooded, candidate)
+    img.putalpha(ImageChops.subtract(alpha, gone))
+    img.save(path)
+    return True
+
+
 def import_skin(source: Path, folder: Path) -> tuple[str, list[str]]:
     """Copy a picture into Peelpad's skins (as PNG). Returns its key and any warnings."""
     source = Path(source)
@@ -258,8 +360,8 @@ def import_skin(source: Path, folder: Path) -> tuple[str, list[str]]:
     if image.isNull():
         raise ValueError("That file isn't a picture Peelpad can read. Use a PNG.")
     notes = []
-    if source.suffix.lower() != ".png":
-        notes.append("It isn't a PNG, so it has no transparent parts.")
+    if source.suffix.lower() != ".png" and not image.hasAlphaChannel():
+        notes.append("It has no transparent parts, so the note will be its whole rectangle.")
     if min(image.width(), image.height()) < 300:
         notes.append(f"It's only {image.width()} x {image.height()} px, so it may look soft. "
                      f"{TEMPLATE} x {TEMPLATE} px is best.")
@@ -274,6 +376,8 @@ def import_skin(source: Path, folder: Path) -> tuple[str, list[str]]:
         shutil.copyfile(source, target)
     elif not image.save(str(target), "PNG"):
         raise ValueError("Couldn't save the skin.")
+    if clear_fake_background(target):
+        notes.append("Its checkerboard background was painted in, not transparent; Peelpad removed it.")
     return f"custom:{target.name}", notes
 
 
@@ -361,7 +465,7 @@ def paint_rows(p: QPainter, note: dict, skin: Skin, w: float, h: float, alpha: f
     """The note's rows, laid out like the live editor does."""
     ink = QColor(ink if ink is not None else writing_colors(skin, note.get("color", 0))[0])
     ink.setAlphaF(ink.alphaF() * alpha)
-    area = safe_rect(w, h)
+    area = safe_rect(w, h, skin.area)
     px = font_px(w)
     rh = row_height(px)
     gap = px * 0.5

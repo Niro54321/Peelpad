@@ -5,10 +5,12 @@ crumpled). Each moving thing is an actor with step() and paint().
 
 from __future__ import annotations
 
+import ctypes
 import math
+import sys
 
 from PySide6.QtCore import QElapsedTimer, QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import (QBrush, QColor, QImage, QLinearGradient, QPainter, QPolygonF,
+from PySide6.QtGui import (QBrush, QColor, QCursor, QGuiApplication, QImage, QLinearGradient, QPainter, QPolygonF,
                            QRadialGradient, QTransform)
 from PySide6.QtWidgets import QWidget
 
@@ -112,20 +114,33 @@ def _curl_shadow(p: QPainter, band, fold, t: QTransform, base: QTransform, k: fl
     p.drawPolygon(_poly(strip, k))
 
 
+def left_button_down() -> bool:
+    """Is the (primary) mouse button held right now? Asked of Windows directly,
+    so a release that never reached us can't leave a sheet hanging in the air."""
+    if sys.platform == "win32":
+        user32 = ctypes.windll.user32
+        key = 0x02 if user32.GetSystemMetrics(23) else 0x01     # buttons swapped for left hands
+        return bool(user32.GetAsyncKeyState(key) & 0x8000)
+    return bool(QGuiApplication.mouseButtons() & Qt.MouseButton.LeftButton)
+
+
 class Stage(QWidget):
-    """A see-through, click-through window only as big as the paper moving in it.
-    It grows or moves when the paper gets near its edge, and goes away the moment
-    the paper stops, so nothing ever sits over the rest of the screen."""
+    """A see-through, click-through window where paper moves.
 
-    ROOM = 140          # spare room around the paper, so the window rarely has to move
+    While you drag paper it covers the screen under the cursor, so it never has to
+    move under your hand (moving a window shows a stale frame, which flickers).
+    Paper that moves by itself (crumpling, springing back) gets a small window
+    just around it. Either way the stage is gone the moment the paper stops."""
 
-    def __init__(self, stages: "Stages"):
+    ROOM = 160
+
+    def __init__(self, stages: "Stages", follow: bool):
         super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
                          | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowTransparentForInput
                          | Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.stages = stages
+        self.stages, self.follow = stages, follow
         self.actors: list = []
         self.timer = QTimer(self)
         self.timer.setTimerType(Qt.TimerType.PreciseTimer)
@@ -138,9 +153,8 @@ class Stage(QWidget):
         actor.stage = self
         self.actors.append(actor)
         actor.step(0.0)
-        self._refresh()
-        if not self.isVisible():
-            self.show()
+        self._place(force=True)
+        self.show()
         self.raise_()
         if not self.timer.isActive():
             self.clock.start()
@@ -150,7 +164,8 @@ class Stage(QWidget):
         dt = min(0.05, self.clock.restart() / 1000)
         self.actors = [a for a in self.actors if a.step(dt)]
         if self.actors:
-            self._refresh()
+            if not self._place():
+                self._refresh()
             return
         self.timer.stop()
         self.hide()
@@ -162,20 +177,33 @@ class Stage(QWidget):
             now = now.united(a.bounds())
         return now.adjusted(-36, -30, 48, 56)          # the shadows reach down and right
 
-    def _refresh(self) -> None:
+    def _place(self, force: bool = False) -> bool:
+        """Put the window where the paper is. True if it moved (and was repainted)."""
         needed = self._needed()
         if needed.isEmpty():
-            return
-        here = QRectF(self.geometry())
-        if not here.contains(needed):
-            room = needed.adjusted(-self.ROOM, -self.ROOM, self.ROOM, self.ROOM).toAlignedRect()
-            self.setGeometry(room)
-            self.dirty = needed
-            self.update()
-            return
+            return False
+        if self.follow:
+            at = QCursor.pos() if any(getattr(a, "follow", False) for a in self.actors) else needed.center().toPoint()
+            screen = QGuiApplication.screenAt(at) or QGuiApplication.primaryScreen()
+            # one pixel short of the screen, so Windows doesn't treat it as a full-screen app
+            want = screen.geometry().adjusted(0, 0, 0, -1)
+            if not force and want == self.geometry():
+                return False
+            self.setGeometry(want)
+        else:
+            if not force and QRectF(self.geometry()).contains(needed):
+                return False
+            self.setGeometry(needed.adjusted(-self.ROOM, -self.ROOM, self.ROOM, self.ROOM).toAlignedRect())
+        self.dirty = needed
+        if self.isVisible():
+            self.repaint()
+        return True
+
+    def _refresh(self) -> None:
+        needed = self._needed()
         area = self.dirty.united(needed)
         self.dirty = needed
-        self.update(area.translated(-here.topLeft()).toAlignedRect())
+        self.update(area.translated(-QPointF(self.geometry().topLeft())).toAlignedRect())
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -191,19 +219,25 @@ class Stage(QWidget):
 
 
 class Stages:
-    """A small stage for each moving piece of paper, gone when it stops."""
+    """A stage for each moving piece of paper, gone when it stops."""
 
     def __init__(self):
         self.live: set[Stage] = set()
 
-    def at(self, global_pt: QPointF | None = None) -> Stage:
-        stage = Stage(self)
+    def at(self, global_pt: QPointF | None = None, follow: bool = False) -> Stage:
+        stage = Stage(self, follow)
         self.live.add(stage)
         return stage
 
     def done(self, stage: Stage) -> None:
         self.live.discard(stage)
         stage.deleteLater()
+
+    def clear(self) -> None:
+        for stage in list(self.live):
+            stage.timer.stop()
+            stage.hide()
+            self.done(stage)
 
 
 def _ease_out(x: float) -> float:
@@ -212,22 +246,23 @@ def _ease_out(x: float) -> float:
 
 
 class PeelActor:
-    """The pad's top sheet: peeled, torn off, carried, dropped, or let go back."""
+    """A sheet in your hand: peeled off the pad (or picked up from the desktop),
+    carried, dropped, or let go so it springs back."""
 
-    DETACH_FOLD = 0.3          # share of the glue band the flap has pulled up
+    TEAR_GLUE = 0.5            # share of the glue band pulled up when it lets go
+    TEAR_SHEET = 0.92          # or this much of the sheet
 
     def __init__(self, sheet: QRectF, grab: QPointF, front: QImage, back: QImage, k: float, glue: float,
-                 on_landed, on_returned, on_torn=None):
+                 on_landed, on_returned, on_torn=None, carry: bool = False, follow: bool = False):
         self.stage: Stage | None = None
         self.sheet = QRectF(sheet)
         self.w, self.h = sheet.width(), sheet.height()
         self.g = (grab.x() - sheet.left(), grab.y() - sheet.top())
         self.front, self.back, self.k, self.glue = front, back, k, glue
         self.on_landed, self.on_returned, self.on_torn = on_landed, on_returned, on_torn
+        self.follow = follow           # read the real mouse every frame
         self.cursor = QPointF(grab)
-        self.state = "peel"
         self.r = min(self.w, self.h) * 0.075
-        self.lifts: dict[tuple, physics.Lift] = {}
         self.painted: Painted | None = None
         self.vel = QPointF()
         self.angle = self.spin = 0.0
@@ -239,6 +274,10 @@ class PeelActor:
         self.back_v = QPointF()
         self.linger = 0.0
         self.t = 0.0
+        self.state = "peel"
+        if carry:
+            self.state = "carry"
+            self.lift = min(self.w, self.h) * 0.05
 
     # input from the pad
     def move(self, global_pt: QPointF) -> None:
@@ -259,36 +298,31 @@ class PeelActor:
 
     def _peel_shape(self, c) -> tuple[Shape, bool]:
         g = self.g
-        dx, dy = c[0] - g[0], c[1] - g[1]
-        inward = (self.w / 2 - g[0]) * dx + (self.h / 2 - g[1]) * dy
-        pull = math.hypot(dx, dy)
-        if pull < 0.5:
+        if math.hypot(c[0] - g[0], c[1] - g[1]) < 0.5:
             return physics.identity(self.w, self.h), False
-        if inward >= 0:
-            shape = physics.fold(self.w, self.h, g, c, self.r)
-            torn = physics.fold_reaches(self.w, self.h, g, c, self.r, self.glue) > self.DETACH_FOLD \
-                or pull > max(self.w, self.h) * 1.15
-            return shape, torn
-        d = (round(dx / pull, 2), round(dy / pull, 2))
-        lift = self.lifts.get(d)
-        if lift is None:
-            n = math.hypot(*d) or 1
-            lift = self.lifts[d] = physics.Lift(self.w, self.h, g, (d[0] / n, d[1] / n))
-        shape = lift.shape(pull)
-        return shape, shape.stretch > 0
+        target = physics.peel_target(self.w, self.h, g, c)
+        shape = physics.fold(self.w, self.h, g, target, self.r)
+        torn = (physics.fold_reaches(self.w, self.h, g, target, self.r, self.glue) > self.TEAR_GLUE
+                or physics.flap_share(self.w, self.h, g, target, self.r) > self.TEAR_SHEET)
+        return shape, torn
 
     def _offset(self, shape: Shape) -> Shape:
         ox, oy = self.sheet.left(), self.sheet.top()
         return physics.move_shape(shape, lambda q: (q[0] + ox, q[1] + oy))
 
     def step(self, dt: float) -> bool:
+        if self.follow and self.state in ("peel", "carry"):
+            self.cursor = QPointF(QCursor.pos())
+            if dt > 0 and not left_button_down():
+                self.release()
         if self.state == "peel":
             c = self._local()
             shape, torn = self._peel_shape(c)
             if torn:
                 self.state = "carry"
                 self.unfold = 0.0
-                self.detach_pull = (c[0] - self.g[0], c[1] - self.g[1])
+                target = physics.peel_target(self.w, self.h, self.g, c)
+                self.detach_pull = (target[0] - self.g[0], target[1] - self.g[1])
                 self.lift = min(self.w, self.h) * 0.05
                 if self.on_torn:
                     self.on_torn()

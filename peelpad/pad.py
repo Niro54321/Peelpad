@@ -9,10 +9,10 @@ import math
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QMenu, QPushButton, QToolTip
+from PySide6.QtWidgets import QMenu, QToolTip
 
 from peelpad import store
-from peelpad.note import MARGIN, Paper, paper_image, shadow_image
+from peelpad.note import MARGIN, Paper, paper_image, round_button, shadow_image
 from peelpad.skins import GLUE, TEMPLATE, note_images
 from peelpad.stage import PeelActor
 
@@ -29,21 +29,10 @@ class Pad(Paper):
         self.press: QPointF | None = None
         self.actor: PeelActor | None = None
         self.peeling = False
-        self.hover = False
         self._layers: dict = {}
         self.editor.submit.connect(self.auto_peel)
-        self.buttons = []
-        for text, tip, slot in (("⚙", "Settings & stats", app.show_settings), ("–", "Hide the pad (it stays in the tray)", self.hide)):
-            b = QPushButton(text, self)
-            b.setToolTip(tip)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setFixedSize(30, 30)
-            b.setStyleSheet("QPushButton { color: #1F1D1A; background: rgba(255,255,255,200); border: 1px solid rgba(0,0,0,45);"
-                            " border-radius: 15px; font-size: 15px; font-weight: 700; padding: 0; }"
-                            "QPushButton:hover { background: white; }")
-            b.clicked.connect(slot)
-            b.hide()
-            self.buttons.append(b)
+        self.buttons = [round_button(self, "⚙", "Settings, stats and history", app.show_settings),
+                        round_button(self, "–", "Minimise to the taskbar", self.showMinimized)]
         self.resize_for_skin()
         self.set_on_top(app.store.data["pad"]["on_top"])
 
@@ -64,11 +53,6 @@ class Pad(Paper):
         w, h = self.paper_size()
         self.setFixedSize(w + 2 * MARGIN, h + BLOCK + BAR + 2 * MARGIN)
         self._layers = {}
-        r = self.paper_rect()
-        y = round(r.bottom() + BLOCK + 6)
-        x = round(r.center().x() - (len(self.buttons) * 36 - 6) / 2)
-        for i, b in enumerate(self.buttons):
-            b.move(x + i * 36, y)
         self.bind()
 
     def set_on_top(self, on: bool) -> None:
@@ -114,6 +98,7 @@ class Pad(Paper):
             self.paint_paper(p)
             if self.hover and store.has_content(self.note):
                 self._dog_ear(p, r)
+        self.paint_bar(p)
         p.end()
 
     def _dog_ear(self, p: QPainter, r: QRectF) -> None:
@@ -141,19 +126,6 @@ class Pad(Paper):
         back = QColor(self.skin().color(self.note["color"])).lighter(112)
         p.setBrush(back)
         p.drawPath(curl)
-
-    # hover
-    def enterEvent(self, event):
-        self.hover = True
-        for b in self.buttons:
-            b.show()
-        self.update()
-
-    def leaveEvent(self, event):
-        self.hover = False
-        for b in self.buttons:
-            b.hide()
-        self.update()
 
     # peeling
     def mousePressEvent(self, event):
@@ -193,15 +165,19 @@ class Pad(Paper):
             self.editor.focus_end()
         self.press = None
 
-    def start_peel(self, grab_global: QPointF) -> None:
+    def bar_rect(self) -> QRectF:
+        r = self.paper_rect()
+        return QRectF(0, r.bottom() + BLOCK, self.width(), self.height() - r.bottom() - BLOCK)
+
+    def start_peel(self, grab_global: QPointF, by_hand: bool = True) -> None:
         w, h = self.paper_size()
         dpr = max(1.0, self.devicePixelRatioF())
         front, back = note_images(self.note, self.skin(), w, h, dpr)
         self.actor = PeelActor(self.global_paper(), grab_global, front, back, dpr, h * GLUE / TEMPLATE,
-                               on_landed=self._landed, on_returned=self._returned)
+                               on_landed=self._landed, on_returned=self._returned, follow=by_hand)
         self.peeling = True
         self.editor.hide()
-        self.app.stages.at(grab_global).add(self.actor)
+        self.app.stages.at(grab_global, follow=True).add(self.actor)
         self.update()
 
     def _returned(self) -> None:
@@ -229,7 +205,7 @@ class Pad(Paper):
         landing = self.app.free_spot(r)
         mid = grab + QPointF(-r.width() * 0.45, -r.height() * 0.55)
         end = landing + (grab - r.topLeft())
-        self.start_peel(grab)
+        self.start_peel(grab, by_hand=False)
         anim = QVariantAnimation(self)
         anim.setDuration(1150)
         anim.setStartValue(0.0)

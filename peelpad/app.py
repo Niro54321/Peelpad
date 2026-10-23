@@ -30,7 +30,8 @@ class App(QObject):
         self.skins_dir = self.data_dir / "skins"
         self.skins_dir.mkdir(exist_ok=True)
         self.store = Store(self.data_dir / "notes.json")
-        self.skin = skin_for(self.store.data["skin"], self.skins_dir, self.store.data["mine"])
+        self._check_skins()
+        self.skin = skin_for(self.store.data["skin"], self.skins_dir, self.store.data["mine"], self.store.data["areas"])
         if self.skin.key != self.store.data["skin"]:
             self.store.data["skin"] = self.skin.key        # its picture is gone
         self._writing()
@@ -58,6 +59,17 @@ class App(QObject):
         self.store.wrote()
         self.changed()
 
+    def _check_skins(self) -> None:
+        """Skins uploaded before Peelpad could remove a painted-in checkerboard: check them once."""
+        checked = self.store.data["checked_skins"]
+        for f in sorted(self.skins_dir.glob("*.png")):
+            if f.name not in checked:
+                try:
+                    skins.clear_fake_background(f)
+                except OSError:
+                    pass
+                checked.append(f.name)
+
     def _writing(self) -> None:
         """Font, size, ink and glow from the settings, for every note."""
         d = self.store.data
@@ -84,7 +96,7 @@ class App(QObject):
         self.pad.move(area.right() - self.pad.width() - 60, area.top() + 80)
 
     @staticmethod
-    def _inside(rect: QRectF) -> QRectF:
+    def inside(rect: QRectF) -> QRectF:
         """Keep a note on a screen."""
         screen = QGuiApplication.screenAt(rect.center().toPoint()) or QGuiApplication.primaryScreen()
         area = QRectF(screen.availableGeometry())
@@ -96,7 +108,7 @@ class App(QObject):
     # ---------------------------------------------------------------- notes
     def open_note(self, note: dict) -> NoteWindow:
         x, y, w, h = note["rect"]
-        r = self._inside(QRectF(x, y, w, h))
+        r = self.inside(QRectF(x, y, w, h))
         note["rect"] = [round(r.x()), round(r.y()), round(r.width()), round(r.height())]
         win = NoteWindow(self, note)
         win.show()
@@ -105,7 +117,7 @@ class App(QObject):
 
     def peeled(self, rect: QRectF) -> None:
         """The top sheet landed: pin it there."""
-        r = self._inside(rect)
+        r = self.inside(rect)
         note = self.store.peel((round(r.x()), round(r.y()), round(r.width()), round(r.height())))
         self.store.wrote()
         win = self.open_note(note)
@@ -138,12 +150,12 @@ class App(QObject):
         while any(abs(t.left() - x) < 24 and abs(t.top() - y) < 24 for t in taken):
             y += 34
             x += 12
-        r = self._inside(QRectF(x, y, pad_paper.width(), pad_paper.height()))
+        r = self.inside(QRectF(x, y, pad_paper.width(), pad_paper.height()))
         return r.topLeft()
 
     # ---------------------------------------------------------------- look
     def set_skin(self, key: str) -> None:
-        self.skin = skin_for(key, self.skins_dir, self.store.data["mine"])
+        self.skin = skin_for(key, self.skins_dir, self.store.data["mine"], self.store.data["areas"])
         self.store.data["skin"] = self.skin.key
         self.pad.resize_for_skin()
         for win in self.windows.values():
@@ -156,6 +168,16 @@ class App(QObject):
         """Your own paper and ink colours (and glow), worn at once."""
         self.store.data["mine"].update(changes)
         self.set_skin("mine")
+
+    def set_area(self, key: str, area: tuple | None) -> None:
+        """Move a skin's text box (None puts it back where Peelpad found it)."""
+        if area is None:
+            self.store.data["areas"].pop(key, None)
+        else:
+            self.store.data["areas"][key] = [round(v, 4) for v in area]
+        if key == self.skin.key:
+            self.set_skin(key)
+        self.changed()
 
     def set_writing(self, key: str, value) -> None:
         """ink, glow, font or text_scale."""
@@ -243,6 +265,7 @@ class App(QObject):
         self.tray.show()
 
     def quit(self) -> None:
+        self.stages.clear()
         self.store.save()
         self.tray.hide()
         self.qapp.quit()

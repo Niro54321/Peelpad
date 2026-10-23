@@ -5,10 +5,9 @@ sheet into thin bands and says where every band's corners land; the stage then
 draws each band's piece of the texture there with an exact projective map, a
 little darker or lighter by how the band faces the light.
 
-- fold:    the page curl. Dragging a point of the sheet in over the sheet rolls
-           that part over a small cylinder and lays it face down on top.
-- lift:    pulling a point outwards bends the sheet up off the pad (an arc from
-           a hinge), seen in perspective, so it grows towards you.
+- fold:    the page curl. Dragging a point of the sheet rolls that part over a
+           small cylinder and lays it face down on top. (Pulling outwards peels
+           the same way: the curl travels back across the sheet.)
 - flutter: a carried sheet ripples and swings with the air.
 - crumple: a grid of triangles squeezed into a crinkled ball.
 """
@@ -172,6 +171,33 @@ def fold_reaches(w: float, h: float, grab: P, cursor: P, r: float, glue: float) 
     return _area(inside) / (w * glue)
 
 
+def flap_share(w: float, h: float, grab: P, cursor: P, r: float) -> float:
+    """How much of the sheet has peeled up, 0..1."""
+    dx, dy = cursor[0] - grab[0], cursor[1] - grab[1]
+    pull = math.hypot(dx, dy)
+    if pull < 0.5:
+        return 0.0
+    n = (-dx / pull, -dy / pull)
+    k0 = _dot(_add(grab, n, -fold_depth(pull, r)), n)
+    return _area(clip(_rect(w, h), n, k0, True)) / (w * h)
+
+
+def peel_target(w: float, h: float, grab: P, cursor: P) -> P:
+    """Where the fold pulls the grabbed point. Pulling in over the sheet: the cursor.
+    Pulling outwards: the outward part is mirrored back in, so the sheet still
+    peels back across itself, further the further you pull."""
+    vx, vy = cursor[0] - grab[0], cursor[1] - grab[1]
+    ix, iy = w / 2 - grab[0], h / 2 - grab[1]
+    il = math.hypot(ix, iy)
+    if il < 1e-6:
+        return cursor
+    ix, iy = ix / il, iy / il
+    along = vx * ix + vy * iy
+    if along >= 0:
+        return cursor
+    return grab[0] + vx - 2 * along * ix, grab[1] + vy - 2 * along * iy
+
+
 def _area(poly: list[P]) -> float:
     if len(poly) < 3:
         return 0.0
@@ -180,76 +206,6 @@ def _area(poly: list[P]) -> float:
         b = poly[(i + 1) % len(poly)]
         s += a[0] * b[1] - b[0] * a[1]
     return abs(s) / 2
-
-
-# ---------------------------------------------------------------- lift
-
-def _arc(phi: float, length: float, s: float) -> tuple[float, float]:
-    """A sheet bent with even curvature: angle phi after `length`. (along, up) at arc s."""
-    if phi < 1e-6:
-        return s, 0.0
-    radius = length / phi
-    return radius * math.sin(s / radius), radius * (1 - math.cos(s / radius))
-
-
-def _project(p: P, z: float, cam: P, height: float) -> P:
-    k = height / max(height - z, height * 0.05)
-    return cam[0] + (p[0] - cam[0]) * k, cam[1] + (p[1] - cam[1]) * k
-
-
-class Lift:
-    """Pulling a point of the sheet outwards: the glue holds, so the sheet bends up
-    from a hinge, more the harder you pull, until it tears off at `tear` px."""
-
-    BEND = 1.35          # most it bends (radians at the grabbed point)
-
-    def __init__(self, w: float, h: float, grab: P, direction: P):
-        self.w, self.h, self.grab = w, h, grab
-        self.d = direction
-        self.t = (-direction[1], direction[0])
-        corners = _rect(w, h)
-        behind = max(_dot(_add(grab, c, -1), direction) for c in corners)
-        ahead = max(_dot(_add(c, grab, -1), direction) for c in corners)
-        self.free = max(behind * 0.72, min(w, h) * 0.3)    # hinge -> grabbed point
-        self.reach = self.free + ahead
-        self.hinge = _add(grab, direction, -self.free)
-        self.cam = (w / 2, h / 2)
-        self.height = max(w, h) * 1.5
-        self.tear = min(w, h) * 0.4
-
-    def point(self, phi: float, s: float, lateral: float) -> P:
-        along, up = _arc(phi, self.free, s)
-        base = _add(_add(self.hinge, self.d, along), self.t, lateral)
-        return _project(base, up, self.cam, self.height)
-
-    def solve(self, pull: float) -> tuple[float, float]:
-        """The bend for a pull; the second value is how far past tearing point it is."""
-        phi = self.BEND * (1 - math.exp(-max(0.0, pull) / (self.tear * 0.55)))
-        return phi, max(0.0, pull - self.tear)
-
-    def shape(self, pull: float, bands: int = 16) -> Shape:
-        phi, over = self.solve(pull)
-        sheet = _rect(self.w, self.h)
-        k0 = _dot(self.hinge, self.d)
-        out = [Band(clip(sheet, self.d, k0, False), sheet, sheet, 0.0, False, 0.0)]
-        big = (self.w + self.h) * 2
-        seam = 0.6
-        for i in range(bands):
-            s0, s1 = self.reach * i / bands, self.reach * (i + 1) / bands
-            poly = slab(sheet, self.d, k0 + s0 - (seam if i else 0), k0 + s1 + seam)
-            if len(poly) < 3:
-                continue
-            a0, a1 = _add(self.hinge, self.d, s0), _add(self.hinge, self.d, s1)
-            src = [_add(a0, self.t, -big), _add(a0, self.t, big), _add(a1, self.t, big), _add(a1, self.t, -big)]
-            dst = [self.point(phi, s0, -big), self.point(phi, s0, big),
-                   self.point(phi, s1, big), self.point(phi, s1, -big)]
-            tilt = phi * (s0 + s1) / 2 / self.free
-            normal = (-math.sin(tilt) * self.d[0], -math.sin(tilt) * self.d[1], math.cos(tilt))
-            facing = sum(a * b for a, b in zip(normal, LIGHT)) / LIGHT[2]
-            back = tilt > math.pi / 2
-            shade = max(-0.6, min(0.35, (abs(facing) - 1) * 0.7))
-            out.append(Band(poly, src, dst, shade, back, _arc(phi, self.free, (s0 + s1) / 2)[1]))
-        return Shape(out, None, over)
 
 
 # ---------------------------------------------------------------- carried

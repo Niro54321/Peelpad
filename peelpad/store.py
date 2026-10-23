@@ -53,7 +53,9 @@ DEFAULTS = {"version": 1, "skin": "neon", "notes": [], "days": [],
             "font": "",                 # a font family; empty is the handwriting default
             "text_scale": 1.0,
             "note_size": 300,           # width of the pad's sheets, px
-            "mine": {"paper": "#1B1E2B", "ink": "#7DF9FF", "glow": True}}   # "Your colours" theme
+            "mine": {"paper": "#1B1E2B", "ink": "#7DF9FF", "glow": True},   # "Your colours" theme
+            "areas": {},                # skin key -> where its text box is, if you moved it
+            "checked_skins": []}        # skins already checked for a painted-in checkerboard
 
 
 class Store:

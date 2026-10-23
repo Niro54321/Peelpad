@@ -1,20 +1,23 @@
-"""A note pinned on the desktop: always on top, moved by dragging the paper,
-resized from its bottom-right corner. When every task is checked it crumples.
+"""A note pinned on the desktop: always on top. Drag its paper and it swings and
+ripples in your hand like the sheets from the pad. The buttons under it:
+↕ resize (then ✓ when it's the size you want), ✓ done, ● next colour, ✕ throw away.
+When every task is checked it crumples.
 """
 
 from __future__ import annotations
 
 from PIL import Image, ImageFilter
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPen, QRadialGradient
 from PySide6.QtWidgets import QPushButton, QWidget
 
 from peelpad import store
 from peelpad.editor import TaskEditor
-from peelpad.skins import NEON, Skin, font_px, safe_rect, writing_colors
+from peelpad.skins import NEON, PictureSkin, Skin, font_px, note_images, safe_rect, writing_colors
 
 MARGIN = 18          # room around the paper for its shadow (and the pin)
-GRIP = 22            # the corner that resizes
+BAR = 46             # room under the paper for the buttons
+HANDLE = 9           # half the size of a resize handle
 MIN_SIZE = 90
 MAX_SIZE = 1400
 
@@ -66,6 +69,21 @@ def draw_pin(p: QPainter, at: QPointF, r: float, color: QColor) -> None:
     p.restore()
 
 
+def round_button(parent: QWidget, text: str, tip: str, slot) -> QPushButton:
+    """The small round buttons under the pad and the notes."""
+    b = QPushButton(text, parent)
+    b.setToolTip(tip)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    b.setFixedSize(32, 32)
+    b.setStyleSheet("QPushButton { color: #1F1D1A; background: rgba(255,255,255,215); border: 1px solid rgba(0,0,0,50);"
+                    " border-radius: 16px; font-size: 15px; font-weight: 700; padding: 0; }"
+                    "QPushButton:hover { background: white; }"
+                    "QPushButton[on=\"true\"] { background: #FF4FA8; color: white; border-color: #FF4FA8; }")
+    b.clicked.connect(slot)
+    b.hide()
+    return b
+
+
 class Paper(QWidget):
     """A window that shows one note's paper and its writing."""
 
@@ -79,9 +97,15 @@ class Paper(QWidget):
         self.editor.wrote.connect(app.wrote)
         self._cache_key = None
         self._paper = self._shadow = None
+        self.hover = False
 
     def paper_rect(self) -> QRectF:
         raise NotImplementedError
+
+    def bar_rect(self) -> QRectF:
+        """The strip under the paper where the buttons are."""
+        r = self.paper_rect()
+        return QRectF(0, r.bottom(), self.width(), self.height() - r.bottom())
 
     def skin(self) -> Skin:
         return self.app.skin
@@ -89,12 +113,23 @@ class Paper(QWidget):
     def refresh_look(self) -> None:
         self._cache_key = None
         r = self.paper_rect()
-        area = safe_rect(r.width(), r.height()).translated(r.topLeft())
+        area = safe_rect(r.width(), r.height(), self.skin().area).translated(r.topLeft())
         m = round(font_px(r.width()) * 0.7)       # the editor's own margin, room for a neon halo
         self.editor.setGeometry(area.adjusted(-m, -m, m, m).toAlignedRect())
         ink, glow = self._writing()
         self.editor.set_look(ink, font_px(r.width()), glow)
+        self.place_buttons()
         self.update()
+
+    def place_buttons(self) -> None:
+        shown = [b for b in self.buttons if b.property("wanted") is not False]
+        bar = self.bar_rect()
+        x = round(self.paper_rect().center().x() - (len(shown) * 38 - 6) / 2)
+        y = round(bar.top() + (bar.height() - 32) / 2 + 2)
+        for b in self.buttons:
+            b.setVisible(self.hover and b in shown)
+        for i, b in enumerate(shown):
+            b.move(x + i * 38, y)
 
     def bind(self) -> None:
         r = self.paper_rect()
@@ -117,6 +152,21 @@ class Paper(QWidget):
         p.drawImage(QPointF(r.left() - MARGIN, r.top() - MARGIN), self._shadow)
         p.drawImage(r.topLeft(), self._paper)
 
+    def paint_bar(self, p: QPainter) -> None:
+        """While the mouse is over the window the strip under the paper takes the
+        mouse too (nearly invisible), so you can reach the buttons."""
+        if not self.hover:
+            return
+        p.fillRect(self.bar_rect(), QColor(0, 0, 0, 1))
+        shown = [b for b in self.buttons if b.isVisible()]
+        if shown:
+            left = min(b.x() for b in shown) - 6
+            right = max(b.x() + b.width() for b in shown) + 6
+            pill = QRectF(left, shown[0].y() - 5, right - left, 42)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(20, 20, 26, 120))
+            p.drawRoundedRect(pill, 21, 21)
+
     def on_paper(self, pos: QPointF) -> bool:
         """Is this point on the paper (not on a see-through part of a skin)?"""
         r = self.paper_rect()
@@ -128,17 +178,29 @@ class Paper(QWidget):
             return self._paper.pixelColor(x, y).alpha() > 20
         return False
 
+    def enterEvent(self, event):
+        self.hover = True
+        self.place_buttons()
+        self.update()
+
+    def leaveEvent(self, event):
+        # a leave can come from a child (a button); only hide once the mouse is really gone
+        if self.rect().contains(self.mapFromGlobal(QCursor.pos())):
+            return
+        self.hover = False
+        self.place_buttons()
+        self.update()
+
 
 class NoteWindow(Paper):
-    closed = Signal(object)
-
     def __init__(self, app, note: dict):
         super().__init__(app, note, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
                          | Qt.WindowType.WindowStaysOnTopHint)
         self.setWindowTitle("Peelpad note")
-        x, y, w, h = note["rect"]
-        self.setGeometry(round(x - MARGIN), round(y - MARGIN), round(w + 2 * MARGIN), round(h + 2 * MARGIN))
-        self.resizing = None
+        self.sizing = False          # resize mode, after ↕
+        self.drag: tuple | None = None
+        self.press: QPointF | None = None
+        self.carrying = None
         self.finish_timer = QTimer(self)
         self.finish_timer.setSingleShot(True)
         self.finish_timer.setInterval(800)
@@ -148,105 +210,150 @@ class NoteWindow(Paper):
         self.save_timer.setSingleShot(True)
         self.save_timer.setInterval(300)
         self.save_timer.timeout.connect(self._save_rect)
-        self.buttons = []
-        for text, tip, slot in (("✓", "Done: crumple it", self.done),
-                                ("●", "Next colour", self.next_color),
-                                ("✕", "Throw it away", self.throw_away)):
-            b = QPushButton(text, self)
-            b.setToolTip(tip)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(slot)
-            b.hide()
-            self.buttons.append(b)
+        self.size_button = round_button(self, "↕", "Resize: drag the handles, then press ✓", self.toggle_sizing)
+        self.done_button = round_button(self, "✓", "Done: crumple it", self.done)
+        self.color_button = round_button(self, "●", "Next colour", self.next_color)
+        self.away_button = round_button(self, "✕", "Throw it away", self.throw_away)
+        self.buttons = [self.size_button, self.done_button, self.color_button, self.away_button]
         self.confirm_timer = QTimer(self)
         self.confirm_timer.setSingleShot(True)
         self.confirm_timer.setInterval(2200)
-        self.confirm_timer.timeout.connect(lambda: self.buttons[2].setText("✕"))
+        self.confirm_timer.timeout.connect(lambda: self.away_button.setText("✕"))
+        self.place_at(QRectF(*note["rect"]))
         self.bind()
 
+    # geometry
     def paper_rect(self) -> QRectF:
-        return QRectF(MARGIN, MARGIN, self.width() - 2 * MARGIN, self.height() - 2 * MARGIN)
+        return QRectF(MARGIN, MARGIN, self.width() - 2 * MARGIN, self.height() - 2 * MARGIN - BAR)
 
     def global_paper(self) -> QRectF:
         return self.paper_rect().translated(QPointF(self.geometry().topLeft()))
 
-    def refresh_look(self) -> None:
-        super().refresh_look()
-        r = self.paper_rect()
-        size = max(18, round(r.height() * 0.1))
-        ink = self.editor.ink
-        dark = ink.lightnessF() < 0.5
-        fill, hover = ("255,255,255,70", "255,255,255,170") if dark else ("0,0,0,80", "0,0,0,150")
-        for i, b in enumerate(reversed(self.buttons)):
-            b.setGeometry(round(r.right() - 8 - (i + 1) * (size + 4)), round(r.top() + 6), size, size)
-            b.setStyleSheet(
-                f"QPushButton {{ color: rgba({ink.red()},{ink.green()},{ink.blue()},220); background: rgba({fill});"
-                f" border: 1px solid rgba(0,0,0,40); border-radius: {size // 2}px; font-size: {round(size * 0.5)}px;"
-                f" font-weight: 700; padding: 0; }}"
-                f"QPushButton:hover {{ background: rgba({hover}); }}")
-        self.buttons[1].setVisible(self.underMouse() and self.skin().cycle)
+    def place_at(self, paper: QRectF) -> None:
+        self.setGeometry(round(paper.x() - MARGIN), round(paper.y() - MARGIN),
+                         round(paper.width() + 2 * MARGIN), round(paper.height() + 2 * MARGIN + BAR))
 
+    def refresh_look(self) -> None:
+        self.color_button.setProperty("wanted", bool(self.skin().cycle) and not self.sizing)
+        for b in (self.done_button, self.away_button):
+            b.setProperty("wanted", not self.sizing)
+        self.size_button.setText("✓" if self.sizing else "↕")
+        self.size_button.setToolTip("Keep this size" if self.sizing else "Resize: drag the handles, then press ✓")
+        self.size_button.setProperty("on", self.sizing)
+        self.size_button.style().unpolish(self.size_button)
+        self.size_button.style().polish(self.size_button)
+        super().refresh_look()
+
+    # painting
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.paint_paper(p)
         r = self.paper_rect()
-        pin = QColor(NEON[(self.note["color"] + 2) % 4][1]).darker(118)
-        draw_pin(p, QPointF(r.center().x(), r.top() + r.height() * 0.07), max(6.0, r.width() * 0.032), pin)
-        if self.underMouse():
-            # the resize corner
-            ink = QColor(self.editor.ink)
-            ink.setAlpha(90)
-            p.setPen(QPen(ink, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-            for d in (6, 11, 16):
-                p.drawLine(QPointF(r.right() - d, r.bottom() - 3), QPointF(r.right() - 3, r.bottom() - d))
+        if not isinstance(self.skin(), PictureSkin):        # a picture has its own decoration
+            pin = QColor(NEON[(self.note["color"] + 2) % 4][1]).darker(118)
+            draw_pin(p, QPointF(r.center().x(), r.top() + r.height() * 0.07), max(6.0, r.width() * 0.032), pin)
+        if self.sizing:
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(QColor("#FF4FA8"), 1.6, Qt.PenStyle.DashLine))
+            p.drawRect(r.adjusted(-1, -1, 1, 1))
+            p.setPen(QPen(QColor("white"), 1.4))
+            p.setBrush(QColor("#FF4FA8"))
+            for h in self._handles().values():
+                p.drawRoundedRect(h, 3, 3)
+        self.paint_bar(p)
         p.end()
 
-    def enterEvent(self, event):
-        for b in self.buttons:
-            b.show()
+    # resize mode
+    def toggle_sizing(self) -> None:
+        self.sizing = not self.sizing
+        if not self.sizing:
+            self._save_rect()
         self.refresh_look()
 
-    def leaveEvent(self, event):
-        for b in self.buttons:
-            b.hide()
-        self.update()
-
-    def _in_grip(self, pos: QPointF) -> bool:
+    def _handles(self) -> dict:
         r = self.paper_rect()
-        return r.right() - GRIP <= pos.x() <= r.right() + 4 and r.bottom() - GRIP <= pos.y() <= r.bottom() + 4
+        xs = {"l": r.left(), "c": r.center().x(), "r": r.right()}
+        ys = {"t": r.top(), "m": r.center().y(), "b": r.bottom()}
+        out = {}
+        for ky, y in ys.items():
+            for kx, x in xs.items():
+                if kx == "c" and ky == "m":
+                    continue
+                out[ky + kx] = QRectF(x - HANDLE, y - HANDLE, 2 * HANDLE, 2 * HANDLE)
+        return out
 
-    def mouseMoveEvent(self, event):
-        pos = event.position()
-        if self.resizing:
-            start, size = self.resizing
-            d = QCursor.pos() - start
-            w = min(MAX_SIZE, max(MIN_SIZE, size[0] + d.x()))
-            h = min(MAX_SIZE, max(MIN_SIZE, size[1] + d.y()))
-            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                h = w * size[1] / size[0]         # Shift keeps the shape
-            self.resize(round(w + 2 * MARGIN), round(h + 2 * MARGIN))
-            return
-        self.setCursor(Qt.CursorShape.SizeFDiagCursor if self._in_grip(pos) else Qt.CursorShape.ArrowCursor)
+    def _handle_at(self, pos: QPointF):
+        return next((k for k, h in self._handles().items() if h.adjusted(-3, -3, 3, 3).contains(pos)), None)
 
+    _CURSORS = {"tl": Qt.CursorShape.SizeFDiagCursor, "br": Qt.CursorShape.SizeFDiagCursor,
+                "tr": Qt.CursorShape.SizeBDiagCursor, "bl": Qt.CursorShape.SizeBDiagCursor,
+                "tc": Qt.CursorShape.SizeVerCursor, "bc": Qt.CursorShape.SizeVerCursor,
+                "ml": Qt.CursorShape.SizeHorCursor, "mr": Qt.CursorShape.SizeHorCursor}
+
+    def _resize_to(self, handle: str, start: QRectF, d: QPointF, keep: bool) -> None:
+        left, top, right, bottom = start.left(), start.top(), start.right(), start.bottom()
+        if "l" in handle:
+            left = min(right - MIN_SIZE, max(right - MAX_SIZE, left + d.x()))
+        if "r" in handle[1:]:
+            right = max(left + MIN_SIZE, min(left + MAX_SIZE, right + d.x()))
+        if handle[0] == "t":
+            top = min(bottom - MIN_SIZE, max(bottom - MAX_SIZE, top + d.y()))
+        if handle[0] == "b":
+            bottom = max(top + MIN_SIZE, min(top + MAX_SIZE, bottom + d.y()))
+        r = QRectF(left, top, right - left, bottom - top)
+        if keep:                                   # Shift keeps the shape
+            r.setHeight(r.width() * start.height() / start.width())
+            if handle[0] == "t":
+                r.moveBottom(start.bottom())
+        self.place_at(r)
+
+    # mouse
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         pos = event.position()
-        if self._in_grip(pos):
-            r = self.paper_rect()
-            self.resizing = (QCursor.pos(), (r.width(), r.height()))
-        elif self.on_paper(pos):
-            self.windowHandle().startSystemMove()
+        if self.sizing:
+            handle = self._handle_at(pos)
+            if handle:
+                self.drag = (handle, self.global_paper(), QCursor.pos())
+            elif self.on_paper(pos):
+                self.windowHandle().startSystemMove()
+            return
+        if self.on_paper(pos):
+            self.press = pos
+
+    def mouseMoveEvent(self, event):
+        pos = event.position()
+        if self.drag:
+            handle, start, at = self.drag
+            d = QPointF(QCursor.pos() - at)
+            self._resize_to(handle, start, d, bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+            return
+        if self.sizing:
+            handle = self._handle_at(pos)
+            self.setCursor(self._CURSORS[handle] if handle else Qt.CursorShape.SizeAllCursor
+                           if self.on_paper(pos) else Qt.CursorShape.ArrowCursor)
+            return
+        if self.press is not None and (pos - self.press).manhattanLength() > 4:
+            start = self.press
+            self.press = None
+            self.pick_up(QPointF(self.geometry().topLeft()) + start)
 
     def mouseReleaseEvent(self, event):
-        if self.resizing:
-            self.resizing = None
+        self.drag = None
+        self.press = None
 
     def mouseDoubleClickEvent(self, event):
-        if self.on_paper(event.position()):
+        if not self.sizing and self.on_paper(event.position()):
             self.editor.focus_end()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            if self.sizing:
+                self.toggle_sizing()
+            self.editor.clearFocus()
 
     def wheelEvent(self, event):
         """Ctrl + wheel makes the note bigger or smaller, around its middle."""
@@ -257,8 +364,31 @@ class NoteWindow(Paper):
         w = min(MAX_SIZE, max(MIN_SIZE, r.width() * k))
         h = min(MAX_SIZE, max(MIN_SIZE, w * r.height() / r.width()))
         c = r.center()
-        self.setGeometry(round(c.x() - w / 2 - MARGIN), round(c.y() - h / 2 - MARGIN),
-                         round(w + 2 * MARGIN), round(h + 2 * MARGIN))
+        self.place_at(QRectF(c.x() - w / 2, c.y() - h / 2, w, h))
+
+    # picked up and carried, with the same paper physics as a sheet from the pad
+    def pick_up(self, grab: QPointF) -> None:
+        from peelpad.stage import PeelActor
+
+        r = self.global_paper()
+        dpr = max(1.0, self.devicePixelRatioF())
+        front, back = note_images(self.note, self.skin(), round(r.width()), round(r.height()), dpr)
+        self.carrying = PeelActor(r, grab, front, back, dpr, 0, on_landed=self._landed, on_returned=self._landed_back,
+                                  carry=True, follow=True)
+        self.app.stages.at(grab, follow=True).add(self.carrying)
+        QTimer.singleShot(16, self.hide)            # the stage shows the sheet first, so nothing blinks
+
+    def _landed(self, rect: QRectF) -> None:
+        self.carrying = None
+        self.place_at(self.app.inside(rect))
+        self.hover = False
+        self.place_buttons()
+        self.show()
+        self._save_rect()
+
+    def _landed_back(self) -> None:
+        self.carrying = None
+        self.show()
 
     def resizeEvent(self, event):
         self.refresh_look()
@@ -271,11 +401,6 @@ class NoteWindow(Paper):
         r = self.global_paper()
         self.note["rect"] = [round(r.x()), round(r.y()), round(r.width()), round(r.height())]
         self.app.changed()
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Escape:
-            self.clearFocus()
-            self.editor.clearFocus()
 
     # what the buttons do
     def _toggled(self) -> None:
@@ -292,7 +417,7 @@ class NoteWindow(Paper):
         self.app.crumple(self, finished=True)
 
     def throw_away(self) -> None:
-        b = self.buttons[2]
+        b = self.away_button
         if store.tasks(self.note) and not store.is_complete(self.note) and b.text() == "✕":
             b.setText("?")
             b.setToolTip("Click again to throw it away")

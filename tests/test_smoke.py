@@ -57,13 +57,15 @@ def test_tiny_pull_does_nothing():
     assert len(shape.bands) == 1 and shape.bands[0].dst == shape.bands[0].src
 
 
-def test_lift_bends_more_then_tears():
-    lift = physics.Lift(300, 300, (150, 290), (0.0, 1.0))
-    bends = [lift.solve(p)[0] for p in (0, 30, 80, 119)]
-    assert bends == sorted(bends) and bends[0] == 0 and bends[-1] > 0.6
-    assert lift.solve(100)[1] == 0 and lift.solve(160)[1] == 40
-    shape = lift.shape(80)
-    assert len(shape.bands) > 10 and shape.stretch == 0
+def test_pulling_outwards_still_peels_back_across_the_sheet():
+    grab = (150, 290)
+    assert physics.peel_target(300, 300, grab, (150, 200)) == (150, 200)        # inwards: the cursor
+    assert physics.peel_target(300, 300, grab, (150, 380)) == (150, 200)        # outwards: mirrored back in
+    near = physics.flap_share(300, 300, grab, physics.peel_target(300, 300, grab, (150, 330)), 20)
+    far = physics.flap_share(300, 300, grab, physics.peel_target(300, 300, grab, (150, 520)), 20)
+    assert 0 < near < far
+    sideways = physics.peel_target(300, 300, grab, (250, 290))
+    assert sideways == (250, 290)                                               # no jump at the border
 
 
 def test_glue_decides_when_a_fold_tears_off():
@@ -285,3 +287,64 @@ def test_history_lists_each_day(tmp_path):
     assert log["2026-10-21"]["done"] == ["a"]
     s.close(n, finished=True)                    # finished by hand: the rest count as done today
     assert sorted(s.history()[store.today()]["done"]) == ["b", "c"]
+
+
+def _frame_png(path, checker=False):
+    """A cream card in a black frame, on real transparency or a painted checkerboard."""
+    img = QImage(400, 400, QImage.Format.Format_ARGB32)
+    img.fill(QColor(0, 0, 0, 0))
+    p = QPainter(img)
+    if checker:
+        for y in range(0, 400, 20):
+            for x in range(0, 400, 20):
+                p.fillRect(x, y, 20, 20, QColor("#FFFFFF") if (x + y) // 20 % 2 else QColor("#D6D6D6"))
+    p.fillRect(40, 60, 320, 300, QColor("#111111"))
+    p.fillRect(70, 100, 260, 230, QColor("#FFF8E6"))
+    p.end()
+    img.save(str(path))
+    return path
+
+
+def test_text_box_finds_the_inside_of_a_frame(tmp_path):
+    l, t, r, b = skins.detect_area(QImage(str(_frame_png(tmp_path / "frame.png"))))
+    assert 70 / 400 < l < 0.25 and 100 / 400 < t < 0.3 and 0.75 < r < 330 / 400 and 0.75 < b < 330 / 400
+    busy = QImage(200, 200, QImage.Format.Format_ARGB32)
+    busy.fill(QColor(0, 0, 0, 0))
+    assert skins.detect_area(busy) == skins.SAFE
+    moved = skins.skin_for("custom:frame.png", tmp_path, areas={"custom:frame.png": [0.2, 0.5, 0.8, 0.9]})
+    assert moved.area == (0.2, 0.5, 0.8, 0.9)
+    assert skins.safe_rect(400, 400, moved.area) == QRectF(80, 200, 240, 160)
+
+
+def test_painted_checkerboard_becomes_transparent(tmp_path):
+    fake = _frame_png(tmp_path / "fake.png", checker=True)
+    assert skins.clear_fake_background(fake)
+    img = QImage(str(fake))
+    assert img.pixelColor(5, 5).alpha() == 0 and img.pixelColor(25, 5).alpha() == 0
+    assert img.pixelColor(200, 200).alpha() == 255          # the cream middle stays
+    assert img.pixelColor(50, 70).alpha() == 255            # and the frame
+    assert not skins.clear_fake_background(_frame_png(tmp_path / "real.png"))
+
+
+def test_pinned_note_resize_mode():
+    from peelpad.note import NoteWindow
+
+    class App:
+        skin = skins.Skin()
+        stages = None
+
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    n = note_with("one")
+    n["rect"] = [100, 100, 300, 300]
+    win = NoteWindow(App(), n)
+    assert win.global_paper() == QRectF(100, 100, 300, 300)
+    win.toggle_sizing()
+    assert win.sizing and win.size_button.text() == "✓" and len(win._handles()) == 8
+    win._resize_to("br", win.global_paper(), QPointF(60, -40), keep=False)
+    assert (win.global_paper().width(), win.global_paper().height()) == (360, 260)
+    win._resize_to("tl", win.global_paper(), QPointF(500, 0), keep=False)   # can't go below the minimum
+    assert win.global_paper().width() == 90
+    win.toggle_sizing()
+    assert not win.sizing and n["rect"][2] == 90
