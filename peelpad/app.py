@@ -308,6 +308,14 @@ class App(QObject):
         if self.settings:
             self.settings.fill_clock()
 
+    def auto_crumple(self) -> bool:
+        """Does a note crumple by itself once every task on it is checked?"""
+        return bool(self.store.data.get("auto_crumple", True))
+
+    def set_auto_crumple(self, on: bool) -> None:
+        self.store.data["auto_crumple"] = bool(on)
+        self.changed()
+
     def wind_speed(self) -> float:
         """How hard the wind blows on pinned notes, m/s (0 when it's off)."""
         d = self.store.data

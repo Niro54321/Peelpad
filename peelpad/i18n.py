@@ -302,6 +302,16 @@ T: dict[str, tuple[str, str, str, str]] = {
         "اجعل الدفتر فوق النوافذ الأخرى (الملاحظات المثبّتة دائماً فوقها)",
         "Mantener el bloc encima de otras ventanas (las notas fijadas siempre lo están)",
         "パッドをほかのウィンドウより手前に (ピン留めしたメモは常に手前)", "便签本置于其他窗口之上 (固定的便签总是置顶)"),
+    "Crumple a note by itself when every task on it is checked": (
+        "كوّر الملاحظة وأخفها تلقائياً عند إنجاز كل مهامها",
+        "Arrugar la nota sola cuando todas sus tareas estén marcadas",
+        "タスクを全部チェックしたらメモを自動で丸めて消す",
+        "便签上的任务全部勾选后自动揉掉"),
+    "Turned off, a finished note stays on your screen until you press ✓ (done) or ✕ (throw it away) under it.": (
+        "عند إيقافه، تبقى الملاحظة المنجزة على شاشتك حتى تضغط ✓ (تم) أو ✕ (ارمها) تحتها.",
+        "Si lo desactivas, una nota terminada se queda en pantalla hasta que pulses ✓ (hecho) o ✕ (tirar) debajo.",
+        "オフにすると、完了したメモは下の ✓ (完了) か ✕ (捨てる) を押すまで画面に残ります。",
+        "关闭后, 已完成的便签会留在屏幕上, 直到你按下方的 ✓ (完成) 或 ✕ (扔掉)。"),
     "Wind": ("الرياح", "Viento", "風", "风"),
     "Wind blows your pinned notes (glued at the top; they hold still under your mouse)": (
         "الرياح تحرك ملاحظاتك المثبّتة (ملصوقة من الأعلى؛ تثبت تحت الفأرة)",

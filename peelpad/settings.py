@@ -917,6 +917,12 @@ class Settings(GlassWindow):
         on_top.setChecked(self.app.store.data["pad"]["on_top"])
         on_top.toggled.connect(self.app.set_pad_on_top)
         col.addWidget(on_top)
+        crumple = QCheckBox(tr("Crumple a note by itself when every task on it is checked"))
+        crumple.setChecked(self.app.auto_crumple())
+        crumple.toggled.connect(self.app.set_auto_crumple)
+        col.addWidget(crumple)
+        col.addWidget(label("Turned off, a finished note stays on your screen until you press ✓ (done) or ✕ "
+                            "(throw it away) under it.", muted=True, size=12))
         col.addWidget(label("Wind", bold=True))
         wind = QCheckBox(tr("Wind blows your pinned notes (glued at the top; they hold still under your mouse)"))
         wind.setChecked(bool(self.app.store.data.get("wind", True)))

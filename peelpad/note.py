@@ -517,13 +517,15 @@ class NoteWindow(Paper):
 
     # what the buttons do
     def _toggled(self) -> None:
-        if store.is_complete(self.note):
+        # every task checked: it crumples by itself, unless that is turned off in Settings
+        # (then it stays until you press ✓ or ✕)
+        if store.is_complete(self.note) and self.app.auto_crumple():
             self.finish_timer.start()
         else:
             self.finish_timer.stop()
 
     def _maybe_finish(self) -> None:
-        if store.is_complete(self.note):
+        if store.is_complete(self.note) and self.app.auto_crumple():
             self.done()
 
     def done(self) -> None:

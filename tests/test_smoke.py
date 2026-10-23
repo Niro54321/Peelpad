@@ -633,3 +633,41 @@ def test_every_language_has_every_line():
         assert i18n.right_to_left() and len(i18n.weekday_names()) == 7
     finally:
         i18n.set_language("en")
+
+
+def test_a_finished_note_stays_when_auto_crumple_is_off():
+    from peelpad.note import NoteWindow
+
+    crumpled = []
+
+    class App:
+        skin = skins.Skin()
+        stages = None
+        auto = True
+
+        def wind_speed(self):
+            return 0.0
+
+        def auto_crumple(self):
+            return self.auto
+
+        def crumple(self, win, finished):
+            crumpled.append(finished)
+
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    app = App()
+    n = note_with("only task")
+    n["rect"] = [0, 0, 200, 200]
+    win = NoteWindow(app, n)
+    win.editor.rows[0][1].setChecked(True)            # every task checked...
+    assert win.finish_timer.isActive()                # ...so it is about to crumple
+    win.editor.rows[0][1].setChecked(False)
+    app.auto = False
+    win.editor.rows[0][1].setChecked(True)
+    assert not win.finish_timer.isActive()            # turned off: it stays
+    win._maybe_finish()
+    assert crumpled == []
+    win.done()                                        # ✓ still finishes it by hand
+    assert crumpled == [True]
