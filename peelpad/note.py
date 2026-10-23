@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QPushButton, QWidget
 
 from peelpad import store
 from peelpad.editor import TaskEditor
-from peelpad.skins import NEON, PictureSkin, Skin, font_px, note_images, safe_rect, writing_colors
+from peelpad.skins import NEON, PictureSkin, Skin, font_px, note_images, safe_rect, text_effect, writing_colors
 
 MARGIN = 18          # room around the paper for its shadow (and the pin)
 BAR = 46             # room under the paper for the buttons
@@ -95,9 +95,15 @@ class Paper(QWidget):
         self.editor = TaskEditor(self)
         self.editor.changed.connect(app.changed)
         self.editor.wrote.connect(app.wrote)
-        self._cache_key = None
+        self._cache_key = self._shadow_key = None
         self._paper = self._shadow = None
         self.hover = False
+        self.frames = QTimer(self)                  # an animated skin redraws the paper
+        self.frames.timeout.connect(self._next_frame)
+
+    def _next_frame(self) -> None:
+        if self.isVisible():
+            self.update(self.paper_rect().toAlignedRect())
 
     def paper_rect(self) -> QRectF:
         raise NotImplementedError
@@ -117,8 +123,12 @@ class Paper(QWidget):
         m = round(font_px(r.width()) * 0.7)       # the editor's own margin, room for a neon halo
         self.editor.setGeometry(area.adjusted(-m, -m, m, m).toAlignedRect())
         ink, glow = self._writing()
-        self.editor.set_look(ink, font_px(r.width()), glow)
+        self.editor.set_look(ink, font_px(r.width()), glow, text_effect(self.skin()))
         self.place_buttons()
+        if self.skin().animated:
+            self.frames.start(self.skin().frame_ms)
+        else:
+            self.frames.stop()
         self.update()
 
     def place_buttons(self) -> None:
@@ -134,7 +144,7 @@ class Paper(QWidget):
     def bind(self) -> None:
         r = self.paper_rect()
         ink, glow = self._writing()
-        self.editor.bind(self.note, ink, font_px(r.width()), glow)
+        self.editor.bind(self.note, ink, font_px(r.width()), glow, text_effect(self.skin()))
         self.refresh_look()
 
     def _writing(self):
@@ -144,11 +154,15 @@ class Paper(QWidget):
         r = self.paper_rect()
         color = self.note["color"] if color is None else color
         dpr = self.devicePixelRatioF()
-        key = (round(r.width()), round(r.height()), self.skin().key, color, dpr)
+        skin = self.skin()
+        size = (round(r.width()), round(r.height()), skin.key, color, dpr)
+        key = size + (skin.frame_id(),)
         if key != self._cache_key:
-            self._paper = paper_image(self.skin(), key[0], key[1], color, dpr)
-            self._shadow = shadow_image(self._paper, MARGIN, dpr)
+            self._paper = paper_image(skin, size[0], size[1], color, dpr)
             self._cache_key = key
+        if size != self._shadow_key:                # an animation keeps the first frame's shadow
+            self._shadow = shadow_image(self._paper, MARGIN, dpr)
+            self._shadow_key = size
         p.drawImage(QPointF(r.left() - MARGIN, r.top() - MARGIN), self._shadow)
         p.drawImage(r.topLeft(), self._paper)
 
@@ -251,7 +265,7 @@ class NoteWindow(Paper):
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.paint_paper(p)
         r = self.paper_rect()
-        if not isinstance(self.skin(), PictureSkin):        # a picture has its own decoration
+        if not isinstance(self.skin(), PictureSkin) and not self.skin().animated:   # those have their own decoration
             pin = QColor(NEON[(self.note["color"] + 2) % 4][1]).darker(118)
             draw_pin(p, QPointF(r.center().x(), r.top() + r.height() * 0.07), max(6.0, r.width() * 0.032), pin)
         if self.sizing:

@@ -12,7 +12,8 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPalette
 from PySide6.QtWidgets import QAbstractButton, QFrame, QHBoxLayout, QLineEdit, QScrollArea, QVBoxLayout, QWidget
 
 from peelpad import store
-from peelpad.skins import _draw_check, bloom, check_box, hand_font, row_height
+from peelpad.effects import draw_text
+from peelpad.skins import _draw_check, bloom, check_box, hand_font, right_to_left, row_height
 
 
 class Sheet(QWidget):
@@ -21,24 +22,35 @@ class Sheet(QWidget):
     def __init__(self, editor: "TaskEditor"):
         super().__init__()
         self.editor = editor
+        self.halo: QImage | None = None
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+    def stale(self) -> None:
+        """The writing changed: light the halo again on the next paint."""
+        self.halo = None
+        self.update()
+
+    def resizeEvent(self, event):
+        self.halo = None
 
     def paintEvent(self, event):
         ed = self.editor
         if ed.glow is None or not ed.rows:
             return
-        dpr = self.devicePixelRatioF()
-        layer = QImage(max(1, round(self.width() * dpr)), max(1, round(self.height() * dpr)),
-                       QImage.Format.Format_ARGB32_Premultiplied)
-        layer.setDevicePixelRatio(dpr)
-        layer.fill(Qt.GlobalColor.transparent)
-        q = QPainter(layer)
-        for _, check, edit in ed.rows:
-            for w in (check, edit):
-                w.render(q, w.mapTo(self, QPoint(0, 0)), renderFlags=QWidget.RenderFlag(0))
-        q.end()
+        if self.halo is None:
+            dpr = self.devicePixelRatioF()
+            layer = QImage(max(1, round(self.width() * dpr)), max(1, round(self.height() * dpr)),
+                           QImage.Format.Format_ARGB32_Premultiplied)
+            layer.setDevicePixelRatio(dpr)
+            layer.fill(Qt.GlobalColor.transparent)
+            q = QPainter(layer)
+            for _, check, edit in ed.rows:
+                for w in (check, edit):
+                    w.render(q, w.mapTo(self, QPoint(0, 0)), renderFlags=QWidget.RenderFlag(0))
+            q.end()
+            self.halo = bloom(layer, ed.glow, ed.px * dpr)
         p = QPainter(self)
-        p.drawImage(QPoint(0, 0), bloom(layer, ed.glow, ed.px * dpr))
+        p.drawImage(QPoint(0, 0), self.halo)
         p.end()
 
 
@@ -83,7 +95,23 @@ class RowEdit(QLineEdit):
         self.row, self.editor = row, editor
         self.setFrame(False)
         self.setMaxLength(400)
-        self.textChanged.connect(lambda _: editor.inner.update())
+        self.textChanged.connect(lambda _: editor.inner.stale())
+
+    def paintEvent(self, event):
+        # Toon, Pop, Gummy... are drawn by hand; while you type a row it is plain ink, with its cursor
+        ed = self.editor
+        if ed.effect in ("solid", "neon") or self.hasFocus() or not self.text():
+            super().paintEvent(event)
+            return
+        p = QPainter(self)
+        rect = QRectF(self.rect()).adjusted(2, 0, -2, 0)
+        draw_text(p, rect, self.text(), hand_font(ed.px), ed.ink, ed.effect, right_to_left(self.text()),
+                  self.row["done"])
+        p.end()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.update()
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -118,6 +146,7 @@ class TaskEditor(QScrollArea):
         self.note: dict | None = None
         self.ink = QColor("#1F1D1A")
         self.glow: QColor | None = None
+        self.effect = "solid"
         self.px = 17
         self.rows: list[tuple[QWidget, Check, RowEdit]] = []
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -150,8 +179,8 @@ class TaskEditor(QScrollArea):
             return False
         return super().viewportEvent(event)
 
-    def bind(self, note: dict, ink: QColor, px: int, glow: QColor | None = None) -> None:
-        self.note, self.ink, self.px, self.glow = note, QColor(ink), px, glow
+    def bind(self, note: dict, ink: QColor, px: int, glow: QColor | None = None, effect: str = "solid") -> None:
+        self.note, self.ink, self.px, self.glow, self.effect = note, QColor(ink), px, glow, effect
         for w, _, _ in self.rows:
             w.deleteLater()
         self.rows = []
@@ -161,8 +190,8 @@ class TaskEditor(QScrollArea):
             self._make(row, len(self.rows))
         self.restyle()
 
-    def set_look(self, ink: QColor, px: int, glow: QColor | None = None) -> None:
-        self.ink, self.px, self.glow = QColor(ink), px, glow
+    def set_look(self, ink: QColor, px: int, glow: QColor | None = None, effect: str = "solid") -> None:
+        self.ink, self.px, self.glow, self.effect = QColor(ink), px, glow, effect
         self.restyle()
 
     def _make(self, row: dict, index: int) -> RowEdit:
@@ -175,7 +204,7 @@ class TaskEditor(QScrollArea):
         line.addWidget(check)
         line.addWidget(edit, 1)
         check.toggled.connect(lambda on, r=row: self._toggle(r, on))
-        check.toggled.connect(lambda _: self.inner.update())
+        check.toggled.connect(lambda _: self.inner.stale())
         edit.textEdited.connect(lambda text, r=row: self._edit(r, text))
         edit.focusInEvent = self._focus_in(edit)
         self.column.insertWidget(index, holder)
@@ -217,7 +246,7 @@ class TaskEditor(QScrollArea):
             edit.setPlaceholderText("Write a task…" if i == 0 and len(self.rows) == 1 else "")
             check.update()
         self.column.setContentsMargins(*(round(self.px * 0.7),) * 4)
-        self.inner.update()
+        self.inner.stale()
 
     def _toggle(self, row: dict, on: bool) -> None:
         row["done"] = on

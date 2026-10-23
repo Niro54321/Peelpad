@@ -1,6 +1,7 @@
 """What a note looks like: neon paper, a theme (black with glowing blue ink,
-plain white...), colours you pick, or a picture you made. Also the writing:
-its font, size, ink colour and an optional neon glow.
+plain white...), colours you pick, a picture you made (still or animated), or
+the animated Skull parade. Also the writing: its font, size, ink colour and
+effect (Solid, Gradient, Neon, Toon, Pop, Gummy, Prism).
 
 A custom skin is a PNG, ideally 600 x 600 px. It is stretched to the note.
 Transparent pixels are see-through on the desktop (and clicks go through them).
@@ -41,7 +42,7 @@ class Writing:
     family: str = ""                 # empty: the handwriting default
     scale: float = 1.0
     ink: QColor | None = None        # None: the skin's own ink
-    glow: bool | None = None         # None: the skin's own choice
+    effect: str = "auto"             # auto: the skin's own (Neon on the glowing themes)
 
 
 WRITING = Writing()
@@ -103,6 +104,12 @@ class Skin:
     glow = False                         # the ink shines
     area: tuple = SAFE                   # the text box (fractions); you can move it in Settings
     auto_area: tuple = SAFE              # where Peelpad would put it
+    animated = False                     # moves: notes redraw it every frame_ms
+    frame_ms = 0
+
+    def frame_id(self) -> int:
+        """Which picture of the animation is showing now (always 0 for a still skin)."""
+        return 0
 
     def __init__(self, cycle: bool = True, solid: int = 0):
         self.cycle, self.solid = cycle, solid
@@ -172,12 +179,14 @@ def mine_skin(mine: dict) -> ColorSkin:
 class PictureSkin(Skin):
     """A PNG you made."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, image: QImage | None = None):
         super().__init__(cycle=False)
         self.path = Path(path)
         self.key = f"custom:{self.path.name}"
         self.name = self.path.stem
-        self.image = QImage(str(self.path)).convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+        if image is None:
+            image = QImage(str(self.path))
+        self.image = image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
         if self.image.isNull():
             raise ValueError(f"Can't read {self.path.name}")
         self.aspect = self.image.width() / self.image.height()
@@ -256,25 +265,44 @@ def ink_for(image: QImage, area: tuple = SAFE) -> QColor:
     return DARK_INK if luma > 0.5 else LIGHT_INK
 
 
+def text_effect(skin: Skin) -> str:
+    if WRITING.effect and WRITING.effect != "auto":
+        return WRITING.effect
+    return "neon" if skin.glow else "solid"
+
+
 def writing_colors(skin: Skin, color: int) -> tuple[QColor, QColor | None]:
     """The ink to write with, and the colour of its glow (None: no glow).
-    A glowing ink is written with a bright core and shines in its own colour."""
+    Neon ink keeps its colour, a touch brighter, and shines in that colour."""
     ink = QColor(WRITING.ink) if WRITING.ink is not None else skin.ink(color)
-    glow = skin.glow if WRITING.glow is None else WRITING.glow
-    if not glow:
+    if text_effect(skin) != "neon":
         return ink, None
-    core = QColor(round(ink.red() * 0.55 + 255 * 0.45), round(ink.green() * 0.55 + 255 * 0.45),
-                  round(ink.blue() * 0.55 + 255 * 0.45))
-    return core, ink
+    return QColor(ink).lighter(118), ink
+
+
+PICTURES = ("*.png", "*.gif", "*.webp")
+
+
+def picture_files(folder: Path) -> list[Path]:
+    return sorted(f for pattern in PICTURES for f in folder.glob(pattern))
+
+
+def picture_skin(path: Path) -> PictureSkin:
+    from peelpad.animated import AnimatedSkin, is_animated
+
+    return AnimatedSkin(path) if is_animated(path) else PictureSkin(path)
 
 
 def all_skins(folder: Path, mine: dict | None = None) -> list[Skin]:
+    from peelpad.animated import SkullParade
+
     skins: list[Skin] = [Skin()] + [Skin(cycle=False, solid=i) for i in range(NEON_COUNT)]
     skins += [ColorSkin(*t) for t in THEMES]
     skins.append(mine_skin(mine or {}))
-    for f in sorted(folder.glob("*.png")):
+    skins.append(SkullParade())
+    for f in picture_files(folder):
         try:
-            skins.append(PictureSkin(f))
+            skins.append(picture_skin(f))
         except ValueError:
             pass
     return skins
@@ -298,20 +326,16 @@ def _skin_for(key: str, folder: Path, mine: dict | None = None) -> Skin:
         return next((ColorSkin(*t) for t in THEMES if t[0] == key), Skin())
     if key == "mine":
         return mine_skin(mine or {})
+    if key == "anim:skulls":
+        from peelpad.animated import SkullParade
+
+        return SkullParade()
     if key.startswith("custom:"):
         try:
-            return PictureSkin(folder / key[7:])
-        except ValueError:
+            return picture_skin(folder / key[7:])
+        except (ValueError, OSError):
             return Skin()
     return Skin()
-
-
-def _pil(image: QImage):
-    from PIL import Image
-
-    rgba = image.convertToFormat(QImage.Format.Format_RGBA8888)
-    return Image.frombuffer("RGBA", (rgba.width(), rgba.height()), bytes(rgba.constBits()), "raw", "RGBA",
-                            rgba.bytesPerLine(), 1).copy()
 
 
 def clear_fake_background(path: Path) -> bool:
@@ -354,8 +378,24 @@ def clear_fake_background(path: Path) -> bool:
 
 
 def import_skin(source: Path, folder: Path) -> tuple[str, list[str]]:
-    """Copy a picture into Peelpad's skins (as PNG). Returns its key and any warnings."""
+    """Copy a picture into Peelpad's skins. Returns its key and any warnings.
+    Animated GIF, APNG and WebP are kept as they are; still pictures become PNG."""
+    from peelpad.animated import AnimatedSkin, is_animated
+
     source = Path(source)
+    if is_animated(source):
+        skin = AnimatedSkin(source)
+        folder.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha1(source.read_bytes()).hexdigest()[:8]
+        stem = "".join(c if c.isalnum() or c in "-_ " else "_" for c in source.stem).strip() or "skin"
+        target = folder / f"{stem[:40]}-{digest}{source.suffix.lower()}"
+        shutil.copyfile(source, target)
+        notes = []
+        if min(skin.frames[0].width(), skin.frames[0].height()) < 300:
+            notes.append(f"It's only {skin.frames[0].width()} x {skin.frames[0].height()} px, so it may look soft.")
+        if len(skin.frames) >= 150:
+            notes.append("It has a lot of frames; Peelpad plays the first 150.")
+        return f"custom:{target.name}", notes
     image = QImage(str(source))
     if image.isNull():
         raise ValueError("That file isn't a picture Peelpad can read. Use a PNG.")
@@ -461,8 +501,10 @@ def check_box(px: int, row_h: int) -> QRectF:
 
 
 def paint_rows(p: QPainter, note: dict, skin: Skin, w: float, h: float, alpha: float = 1.0,
-               ink: QColor | None = None) -> None:
+               ink: QColor | None = None, effect: str = "solid") -> None:
     """The note's rows, laid out like the live editor does."""
+    from peelpad.effects import draw_text
+
     ink = QColor(ink if ink is not None else writing_colors(skin, note.get("color", 0))[0])
     ink.setAlphaF(ink.alphaF() * alpha)
     area = safe_rect(w, h, skin.area)
@@ -476,15 +518,8 @@ def paint_rows(p: QPainter, note: dict, skin: Skin, w: float, h: float, alpha: f
         box = check_box(px, rh).translated(area.left(), y)
         if row["text"].strip():
             _draw_check(p, box, ink, row["kind"], row["done"])
-        faded = QColor(ink)
-        if row["done"]:
-            faded.setAlphaF(faded.alphaF() * 0.55)
-        p.setPen(faded)
-        p.setFont(hand_font(px, row["done"]))
-        text_rect = QRectF(box.right() + gap, y, area.right() - box.right() - gap, rh)
-        text = p.fontMetrics().elidedText(row["text"], Qt.TextElideMode.ElideRight, int(text_rect.width()))
-        side = Qt.AlignmentFlag.AlignRight if right_to_left(row["text"]) else Qt.AlignmentFlag.AlignLeft
-        p.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | side, text)
+        text_rect = QRectF(box.right() + gap + 2, y, area.right() - box.right() - gap - 4, rh)
+        draw_text(p, text_rect, row["text"], hand_font(px), ink, effect, right_to_left(row["text"]), row["done"])
         y += rh
 
 
@@ -510,7 +545,7 @@ def paint_writing(p: QPainter, note: dict, skin: Skin, w: float, h: float, dpr: 
     """The rows on a front, with their neon glow if the ink shines."""
     core, glow = writing_colors(skin, note.get("color", 0))
     if glow is None:
-        paint_rows(p, note, skin, w, h, ink=core)
+        paint_rows(p, note, skin, w, h, ink=core, effect=text_effect(skin))
         return
     layer = QImage(max(1, round(w * dpr)), max(1, round(h * dpr)), QImage.Format.Format_ARGB32_Premultiplied)
     layer.fill(Qt.GlobalColor.transparent)
@@ -518,7 +553,7 @@ def paint_writing(p: QPainter, note: dict, skin: Skin, w: float, h: float, dpr: 
     q.setRenderHint(QPainter.RenderHint.Antialiasing)
     q.setRenderHint(QPainter.RenderHint.TextAntialiasing)
     q.scale(dpr, dpr)
-    paint_rows(q, note, skin, w, h, ink=core)
+    paint_rows(q, note, skin, w, h, ink=core, effect="neon")
     q.end()
     halo = bloom(layer, glow, font_px(w) * dpr)
     p.save()
@@ -559,7 +594,7 @@ def preview(skin: Skin, size: int, color: int = 0) -> QImage:
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
     skin.paint_front(p, img.width(), img.height(), color)
-    if skin.key != "neon":
+    if skin.key != "neon" and not skin.animated:
         sample = {"color": color, "rows": [{"text": "Aa", "kind": "task", "done": False}]}
         paint_writing(p, sample, skin, img.width(), img.height(), 1.0)
     p.end()

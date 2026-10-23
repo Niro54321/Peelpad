@@ -66,13 +66,20 @@ class Pad(Paper):
         self.bind()
 
     # painting
-    def _layer(self, color: int):
+    def _layer(self, color: int, depth: int = 0):
+        """A sheet of the pad, `depth` sheets down (darker the deeper), and its shadow.
+        Only the paper is darkened, never the see-through parts of a shaped skin."""
         w, h = self.paper_size()
         dpr = self.devicePixelRatioF()
-        key = (self.skin().key, color, w, h, dpr)
+        key = (self.skin().key, color, w, h, dpr, depth)
         if key not in self._layers:
             img = paper_image(self.skin(), w, h, color, dpr)
-            self._layers[key] = (img, shadow_image(img, MARGIN, dpr))
+            if depth:
+                p = QPainter(img)
+                p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
+                p.fillRect(QRectF(0, 0, w, h), QColor(0, 0, 0, 10 + 3 * depth))
+                p.end()
+            self._layers[key] = (img, shadow_image(img, MARGIN, dpr) if not depth else None)
         return self._layers[key]
 
     def paintEvent(self, event):
@@ -84,19 +91,20 @@ class Pad(Paper):
         img, shadow = self._layer(top)
         p.drawImage(QPointF(r.left() - MARGIN, r.top() - MARGIN + BLOCK), shadow)
         # the sheets under the top one, their edges showing as the pad's side
+        shaped = self.skin().aspect is not None or self.skin().animated
         for i in range(LAYERS, 0, -1):
-            layer, _ = self._layer((top + i) % 4)
+            layer, _ = self._layer((top + i) % 4, i)
             y = r.top() + BLOCK * i / LAYERS
             p.drawImage(QPointF(r.left(), y), layer)
-            p.fillRect(QRectF(r.left(), y, r.width(), r.height()), QColor(0, 0, 0, 10 + 3 * i))
-            p.setPen(QPen(QColor(0, 0, 0, 30), 0.7))
-            p.drawLine(QPointF(r.left() + 1, y + r.height() - 0.4), QPointF(r.right() - 1, y + r.height() - 0.4))
+            if not shaped:
+                p.setPen(QPen(QColor(0, 0, 0, 30), 0.7))
+                p.drawLine(QPointF(r.left() + 1, y + r.height() - 0.4), QPointF(r.right() - 1, y + r.height() - 0.4))
         if self.peeling:
             under, _ = self._layer((top + 1) % 4)
             p.drawImage(r.topLeft(), under)
         else:
             self.paint_paper(p)
-            if self.hover and store.has_content(self.note):
+            if self.hover and store.has_content(self.note) and self.skin().aspect is None and not self.skin().animated:
                 self._dog_ear(p, r)
         self.paint_bar(p)
         p.end()

@@ -516,10 +516,20 @@ class Settings(GlassWindow):
             f"The top {GLUE} px is the glue band, where the pin sits and where you grab the note. Decorate it, "
             f"but keep the text area calm so tasks stay readable.<br>"
             f"• <b>Ink:</b> picked for you (dark on light pictures, light on dark), or set it in Writing.<br>"
+            f"• <b>Animated:</b> an animated GIF, APNG or WebP plays on every note, looping. Same size and "
+            f"text area; keep the moving parts around the edges.<br>"
             f"Save the template, paint over it in any editor, upload it, and every note switches to it at once.",
             size=12)
         spec.setTextFormat(Qt.TextFormat.RichText)
         col.addWidget(spec)
+        row = QHBoxLayout()
+        prompt = QPushButton("Copy a prompt for an animated skin")
+        prompt.setToolTip("Paste it into an AI image or animation tool, or send it to an artist")
+        prompt.clicked.connect(self._copy_prompt)
+        self.prompt_done = label("", muted=True, size=12)
+        row.addWidget(prompt)
+        row.addWidget(self.prompt_done, 1)
+        col.addLayout(row)
         col.addStretch(1)
         self.fill_skins()
         return scrolled(inner)
@@ -575,7 +585,7 @@ class Settings(GlassWindow):
 
     def upload(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Choose your skin", str(Path.home() / "Pictures"),
-                                              "Pictures (*.png *.jpg *.jpeg *.webp)")
+                                              "Pictures, still or animated (*.png *.gif *.webp *.jpg *.jpeg)")
         if not path:
             return
         try:
@@ -586,6 +596,14 @@ class Settings(GlassWindow):
         self.app.set_skin(key)
         if notes:
             QMessageBox.information(self, "Peelpad", "Your skin is on. A heads-up:\n\n" + "\n".join(notes))
+
+    def _copy_prompt(self) -> None:
+        from PySide6.QtGui import QGuiApplication
+
+        from peelpad.guide import ANIMATED_PROMPT
+
+        QGuiApplication.clipboard().setText(ANIMATED_PROMPT)
+        self.prompt_done.setText("Copied. Paste it into your AI tool and change the animation idea.")
 
     def template(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Save the skin template",
@@ -626,23 +644,84 @@ class Settings(GlassWindow):
         self.text_size.changed.connect(lambda v: self.app.set_writing("text_scale", v / 100))
         col.addWidget(self.text_size)
 
-        col.addWidget(label("Ink", bold=True))
-        ink = d.get("ink", "auto")
-        self.ink = Segmented([("auto", "Auto"), ("dark", "Dark"), ("light", "Light"), ("pick", "Pick a colour…")],
-                             "pick" if ink.startswith("#") else ink)
-        self.ink.changed.connect(self._ink)
-        col.addWidget(self.ink)
-        col.addWidget(label("Auto writes in each look's own ink: dark on neon and white paper, glowing blue on "
-                            "Midnight, and so on.", muted=True, size=12))
+        col.addWidget(label("Ink colour", bold=True))
+        self.ink_grid = QGridLayout()
+        self.ink_grid.setSpacing(6)
+        self.ink_group = QButtonGroup(self)
+        self.ink_group.setExclusive(True)
+        col.addLayout(self.ink_grid)
+        col.addWidget(label("Auto writes in each look's own ink: dark on neon and white paper, blue on Midnight, "
+                            "and so on. Pick any colour with the last button.", muted=True, size=12))
 
-        col.addWidget(label("Neon glow", bold=True))
-        self.glow = Segmented([("auto", "Auto"), ("on", "On"), ("off", "Off")], d.get("glow", "auto"))
-        self.glow.changed.connect(lambda k: self.app.set_writing("glow", k))
-        col.addWidget(self.glow)
-        col.addWidget(label("The ink shines in its own colour, like a neon sign. Best on dark paper "
-                            "(Midnight, Neon night, Toxic, or your own colours).", muted=True, size=12))
+        col.addWidget(label("Effect", bold=True))
+        self.effect_grid = QGridLayout()
+        self.effect_grid.setSpacing(8)
+        self.effect_group = QButtonGroup(self)
+        self.effect_group.setExclusive(True)
+        col.addLayout(self.effect_grid)
+        col.addWidget(label("Neon shines like a sign, Toon gets a cartoon outline, Pop a bold offset shadow, "
+                            "Gummy a candy shine, Prism a rainbow. The row you are typing in stays plain until "
+                            "you leave it.", muted=True, size=12))
         col.addStretch(1)
+        self.fill_writing()
         return scrolled(inner)
+
+    INKS = ["#FFFFFF", "#1F1D1A", "#F3FF6B", "#FFD447", "#FF9F1C", "#FF3B5C", "#FF4FD8", "#B26BFF",
+            "#3DB2FF", "#7DF9FF", "#5CFF6B"]
+
+    def fill_writing(self) -> None:
+        """The ink swatches and the effect samples, showing what is chosen now."""
+        from peelpad.effects import EFFECTS, effect_icon
+        from peelpad.skins import writing_colors
+
+        for grid, group in ((self.ink_grid, self.ink_group), (self.effect_grid, self.effect_group)):
+            while grid.count():
+                w = grid.takeAt(0).widget()
+                if w:
+                    group.removeButton(w)
+                    w.deleteLater()
+        ink = self.app.store.data.get("ink", "auto")
+        choices = [("auto", "Auto")] + [(c, "") for c in self.INKS]
+        custom = ink.startswith("#") and ink.upper() not in self.INKS
+        choices.append((ink if custom else "pick", "…"))
+        for i, (key, text) in enumerate(choices):
+            b = QPushButton(text)
+            b.setCheckable(True)
+            b.setProperty("swatch", True)
+            b.setFixedSize(58 if key == "auto" else 34, 34)
+            if key.startswith("#"):
+                b.setIcon(swatch_icon(QColor(key), 22))
+                b.setIconSize(QSize(22, 22))
+                b.setToolTip(key if key in self.INKS else f"Your colour {key} (click to change)")
+            elif key == "pick":
+                b.setToolTip("Pick any colour")
+            b.setChecked(key.upper() == ink.upper() or (key == "pick" and False))
+            b.clicked.connect(lambda _=False, k=key: self._ink(k))
+            self.ink_group.addButton(b)
+            self.ink_grid.addWidget(b, 0, i)
+        self.ink_grid.setColumnStretch(len(choices), 1)
+        effect = self.app.store.data.get("effect", "auto")
+        sample_ink = writing_colors(self.app.skin, 0)[1] or writing_colors(self.app.skin, 0)[0]
+        if sample_ink.lightnessF() < 0.3:
+            sample_ink = QColor("#FFFFFF")
+        dpr = self.devicePixelRatioF()
+        for i, (key, name) in enumerate([("auto", "Auto")] + EFFECTS):
+            b = QPushButton()
+            b.setCheckable(True)
+            b.setProperty("swatch", True)
+            b.setFixedSize(120, 52)
+            pm = QPixmap.fromImage(effect_icon("solid" if key == "auto" else key, name, sample_ink, 112, 44, dpr))
+            b.setIcon(QIcon(pm))
+            b.setIconSize(QSize(112, 44))
+            b.setChecked(key == effect)
+            b.clicked.connect(lambda _=False, k=key: self._effect(k))
+            self.effect_group.addButton(b)
+            self.effect_grid.addWidget(b, i // 4, i % 4)
+        self.frame.style_children()
+
+    def _effect(self, key: str) -> None:
+        self.app.set_writing("effect", key)
+        self.fill_writing()
 
     def _default_font(self) -> None:
         self.font_box.blockSignals(True)
@@ -651,15 +730,14 @@ class Settings(GlassWindow):
         self.app.set_writing("font", "")
 
     def _ink(self, key: str) -> None:
-        if key != "pick":
+        if key == "auto" or key.upper() in self.INKS:
             self.app.set_writing("ink", key)
-            return
-        now = self.app.store.data.get("ink", "auto")
-        color = QColorDialog.getColor(QColor(now if now.startswith("#") else "#3DB2FF"), self, "Ink colour")
-        if color.isValid():
-            self.app.set_writing("ink", color.name())
-        elif not now.startswith("#"):
-            self.ink.set(now)
+        else:
+            now = self.app.store.data.get("ink", "auto")
+            color = QColorDialog.getColor(QColor(now if now.startswith("#") else "#3DB2FF"), self, "Ink colour")
+            if color.isValid():
+                self.app.set_writing("ink", color.name().upper())
+        self.fill_writing()
 
     # ---------------------------------------------------------------- general
     def _general_page(self) -> QWidget:

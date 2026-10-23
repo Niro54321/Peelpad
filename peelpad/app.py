@@ -71,12 +71,14 @@ class App(QObject):
                 checked.append(f.name)
 
     def _writing(self) -> None:
-        """Font, size, ink and glow from the settings, for every note."""
+        """Font, size, ink and effect from the settings, for every note."""
         d = self.store.data
         ink = d.get("ink", "auto")
         skins.WRITING.ink = {"dark": DARK_INK, "light": LIGHT_INK}.get(ink) or (
             QColor(ink) if ink.startswith("#") else None)
-        skins.WRITING.glow = {"on": True, "off": False}.get(d.get("glow", "auto"))
+        if "effect" not in d:                       # the older on/off glow switch
+            d["effect"] = {"on": "neon", "off": "solid"}.get(d.pop("glow", "auto"), "auto")
+        skins.WRITING.effect = d["effect"]
         skins.WRITING.family = d.get("font", "")
         skins.WRITING.scale = float(d.get("text_scale", 1.0))
 
@@ -180,9 +182,11 @@ class App(QObject):
         self.changed()
 
     def set_writing(self, key: str, value) -> None:
-        """ink, glow, font or text_scale."""
+        """ink, effect, font or text_scale."""
         self.store.data[key] = value
         self.restyle_all()
+        if self.settings and key in ("ink", "effect"):
+            self.settings.fill_writing()
 
     def set_note_size(self, width: int) -> None:
         self.store.data["note_size"] = max(140, min(640, int(width)))

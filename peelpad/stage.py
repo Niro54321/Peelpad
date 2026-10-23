@@ -249,8 +249,7 @@ class PeelActor:
     """A sheet in your hand: peeled off the pad (or picked up from the desktop),
     carried, dropped, or let go so it springs back."""
 
-    TEAR_GLUE = 0.5            # share of the glue band pulled up when it lets go
-    TEAR_SHEET = 0.92          # or this much of the sheet
+    TEAR_SHEET = 0.86          # it lets go once this much of the sheet has peeled up
 
     def __init__(self, sheet: QRectF, grab: QPointF, front: QImage, back: QImage, k: float, glue: float,
                  on_landed, on_returned, on_torn=None, carry: bool = False, follow: bool = False):
@@ -302,8 +301,7 @@ class PeelActor:
             return physics.identity(self.w, self.h), False
         target = physics.peel_target(self.w, self.h, g, c)
         shape = physics.fold(self.w, self.h, g, target, self.r)
-        torn = (physics.fold_reaches(self.w, self.h, g, target, self.r, self.glue) > self.TEAR_GLUE
-                or physics.flap_share(self.w, self.h, g, target, self.r) > self.TEAR_SHEET)
+        torn = physics.flap_share(self.w, self.h, g, target, self.r) > self.TEAR_SHEET
         return shape, torn
 
     def _offset(self, shape: Shape) -> Shape:

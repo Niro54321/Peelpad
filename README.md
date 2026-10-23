@@ -11,7 +11,7 @@ off every task, the note crumples into a ball and disappears.
 
 - **A pad you peel from.** Write on the top sheet, then grab the paper and pull.
   It curls back over a little roll, showing its paler back, and the curl
-  travels across the sheet as far as you pull, until the glue lets go. Carried
+  travels across the whole sheet as you pull, until it comes off. Carried
   around, it swings and ripples with the air. Let go before it tears and it
   springs back onto the pad.
 - **Pinned anywhere, any size.** A torn-off note lands where you drop it and
@@ -35,8 +35,10 @@ off every task, the note crumples into a ball and disappears.
   Midnight (black paper, glowing blue ink), Neon night (glowing pink), Toxic
   (glowing green), Paper white, Kraft. Or choose your own paper and ink colours,
   or design your own skin (see below).
-- **Writing.** Pick any font (the default is handwriting), the text size, the ink
-  colour, and a neon glow that makes the ink shine like a sign.
+- **Writing.** Pick any font (the default is handwriting), the text size, any
+  ink colour, and an effect: Solid, Gradient, Neon (shines like a sign), Toon
+  (cartoon outline), Pop (bold offset shadow), Gummy (candy shine) or Prism
+  (rainbow).
 
 ## Your own skin
 
@@ -58,6 +60,13 @@ checkerboard painted in. Peelpad spots that and makes it truly see-through.
 
 **Save the template PNG…** gives you a 600 × 600 guide with the glue band and safe
 area marked. Paint over it in any editor, then upload it.
+
+**Animated skins.** Upload an animated GIF, APNG or WebP and it plays on every
+note, looping. Peelpad comes with one: *Skull parade*, a little skull running
+along the bottom of a cream card while a bat flaps and the stars twinkle.
+Settings → Look → **Copy a prompt for an animated skin** gives you a ready
+brief to paste into an AI animation tool (or send to an artist). It is also in
+[docs/animated-skin-prompt.md](docs/animated-skin-prompt.md).
 
 ## Keys
 
@@ -112,7 +121,7 @@ shaded by how it faces a light at the top left.
   around a cylinder and then lies flat, face down, on top. The fold line is
   solved so the point you grabbed stays under the cursor. Pull outwards and the
   outward part of the pull is mirrored back in, so the curl still travels across
-  the sheet. It tears off once half the glue band has come up.
+  the sheet. It tears off once almost all of the sheet has peeled up.
 - **Carry:** the sheet turns on the point you hold, trailing behind your motion
   on a damped spring, and a travelling wave makes it flutter.
 - **Crumple:** an 11 × 11 grid of paper (242 triangles) moves toward a noisy sphere. The edges

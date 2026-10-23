@@ -181,7 +181,7 @@ def test_every_effect_draws(tmp_path):
     sheet = QRectF(100, 100, 300, 300)
     actor = PeelActor(sheet, QPointF(390, 390), front, back, 1.0, 48, landed.append, lambda: None)
     canvas = QImage(800, 800, QImage.Format.Format_ARGB32_Premultiplied)
-    for target in [(330, 330), (200, 200), (60, 60), (300, 500), (500, 600)]:
+    for target in [(330, 330), (200, 200), (60, 60), (-80, -80), (300, 500), (500, 600)]:
         actor.move(QPointF(*target))
         actor.step(1 / 60)
         canvas.fill(0)
@@ -241,6 +241,7 @@ def test_themes_and_your_colours(tmp_path):
     midnight = skins.skin_for("theme:midnight", tmp_path)
     core, glow = skins.writing_colors(midnight, 0)
     assert glow == QColor("#3DB2FF") and core.lightness() > glow.lightness()
+    assert core.hue() == glow.hue()                       # neon keeps the colour you picked
     white = skins.skin_for("theme:white", tmp_path)
     assert skins.writing_colors(white, 0) == (skins.DARK_INK, None)
     mine = skins.skin_for("mine", tmp_path, {"paper": "#102030", "ink": "#FF0000", "glow": False})
@@ -251,11 +252,11 @@ def test_glowing_ink_shines_around_the_letters(tmp_path):
     note = note_with("Neon")
     midnight = skins.skin_for("theme:midnight", tmp_path)
     front, _ = skins.note_images(note, midnight, 300, 300, 1.0)
-    skins.WRITING.glow = False
+    skins.WRITING.effect = "solid"
     try:
         plain, _ = skins.note_images(note, midnight, 300, 300, 1.0)
     finally:
-        skins.WRITING.glow = None
+        skins.WRITING.effect = "auto"
 
     def blue(img):
         return sum(img.pixelColor(x, y).blue() for x in range(30, 200, 2) for y in range(45, 80, 2))
@@ -348,3 +349,61 @@ def test_pinned_note_resize_mode():
     assert win.global_paper().width() == 90
     win.toggle_sizing()
     assert not win.sizing and n["rect"][2] == 90
+
+
+def test_every_text_effect_paints_in_the_chosen_colour():
+    from peelpad.effects import EFFECTS, draw_text
+
+    ink = QColor("#FF4FD8")
+    seen = {}
+    for key, _ in EFFECTS:
+        img = QImage(240, 40, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        p = QPainter(img)
+        draw_text(p, QRectF(4, 0, 232, 40), "Neon notes", skins.hand_font(22), ink, key)
+        p.end()
+        colours = {img.pixelColor(x, y).rgb() for x in range(0, 240, 2) for y in range(0, 40, 2)
+                   if img.pixelColor(x, y).alpha() > 200}
+        assert colours, key
+        seen[key] = colours
+    assert len(seen["prism"]) > len(seen["solid"]) and len(seen["gradient"]) > len(seen["solid"])
+
+
+def test_animated_gif_skin_plays(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from peelpad import animated
+
+    frames = [Image.new("RGBA", (300, 300), c) for c in ((255, 0, 0, 255), (0, 255, 0, 255), (0, 0, 255, 255))]
+    src = tmp_path / "blink.gif"
+    frames[0].save(src, save_all=True, append_images=frames[1:], duration=100, loop=0)
+    key, _ = skins.import_skin(src, tmp_path / "skins")
+    assert key.endswith(".gif")
+    skin = skins.skin_for(key, tmp_path / "skins")
+    assert skin.animated and len(skin.frames) == 3 and skin.frame_ms == 100
+    monkeypatch.setattr(animated, "now_ms", lambda: 50.0)
+    first = skin.frame_id()
+    monkeypatch.setattr(animated, "now_ms", lambda: 150.0)
+    assert skin.frame_id() != first
+    assert key in [s.key for s in skins.all_skins(tmp_path / "skins")]
+
+
+def test_skull_parade_moves():
+    from peelpad.animated import SkullParade
+
+    sk = SkullParade()
+    assert sk.animated and skins.skin_for("anim:skulls", Path(".")).key == "anim:skulls"
+
+    def frame(t):
+        img = QImage(200, 200, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        p = QPainter(img)
+        sk.paint_front(p, 200, 200, 0, t=t)
+        p.end()
+        return img
+    assert frame(0.5) != frame(2.0)
+    calm = skins.safe_rect(200, 200, sk.area)
+    a, b = frame(0.5), frame(2.0)
+    assert all(a.pixelColor(x, y) == b.pixelColor(x, y)        # nothing moves where the text goes
+               for x in range(int(calm.left()), int(calm.right()), 7)
+               for y in range(int(calm.top()), int(calm.bottom()), 7))
