@@ -1,0 +1,265 @@
+"""Peelpad: the pad, the notes pinned around the desktop, the tray and the settings."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+from PySide6.QtCore import QObject, QPointF, QRectF, QTimer
+from PySide6.QtGui import QAction, QColor, QGuiApplication
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+
+from peelpad.note import MARGIN, NoteWindow
+from peelpad.skins import DARK_INK, LIGHT_INK, note_images, skin_for
+from peelpad.stage import CrumpleActor, Stages
+from peelpad.store import Store
+from peelpad.theme import app_icon
+from peelpad.util import app_data_dir
+
+APP_ID = "Niro54321.Peelpad"
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+class App(QObject):
+    def __init__(self, qapp: QApplication):
+        super().__init__()
+        self.qapp = qapp
+        self.data_dir = app_data_dir()
+        self.skins_dir = self.data_dir / "skins"
+        self.skins_dir.mkdir(exist_ok=True)
+        self.store = Store(self.data_dir / "notes.json")
+        self.skin = skin_for(self.store.data["skin"], self.skins_dir)
+        if self.skin.key != self.store.data["skin"]:
+            self.store.data["skin"] = self.skin.key        # its picture is gone
+        self.ink = self._ink(self.store.data["ink"])
+        self.stages = Stages()
+        self.save_timer = QTimer(self)
+        self.save_timer.setSingleShot(True)
+        self.save_timer.setInterval(400)
+        self.save_timer.timeout.connect(self.store.save)
+        self.settings = None
+        self.windows: dict[str, NoteWindow] = {}
+
+        from peelpad.pad import Pad
+        self.pad = Pad(self)
+        self._place_pad()
+        for note in self.store.pinned():
+            self.open_note(note)
+        self._tray()
+        self.pad.show()
+
+    # ---------------------------------------------------------------- bookkeeping
+    def changed(self) -> None:
+        self.save_timer.start()
+
+    def wrote(self) -> None:
+        self.store.wrote()
+        self.changed()
+
+    @staticmethod
+    def _ink(mode: str) -> QColor | None:
+        return {"dark": DARK_INK, "light": LIGHT_INK}.get(mode)
+
+    def _place_pad(self) -> None:
+        pos = self.store.data["pad"].get("pos")
+        if pos and QGuiApplication.screenAt(QPointF(pos[0] + 60, pos[1] + 60).toPoint()):
+            self.pad.move(pos[0], pos[1])
+            return
+        area = QGuiApplication.primaryScreen().availableGeometry()
+        self.pad.move(area.right() - self.pad.width() - 60, area.top() + 80)
+
+    @staticmethod
+    def _inside(rect: QRectF) -> QRectF:
+        """Keep a note on a screen."""
+        screen = QGuiApplication.screenAt(rect.center().toPoint()) or QGuiApplication.primaryScreen()
+        area = QRectF(screen.availableGeometry())
+        r = QRectF(rect)
+        r.moveLeft(min(max(r.left(), area.left() + 4), area.right() - r.width() - 4))
+        r.moveTop(min(max(r.top(), area.top() + 4), area.bottom() - r.height() - 4))
+        return r
+
+    # ---------------------------------------------------------------- notes
+    def open_note(self, note: dict) -> NoteWindow:
+        x, y, w, h = note["rect"]
+        r = self._inside(QRectF(x, y, w, h))
+        note["rect"] = [round(r.x()), round(r.y()), round(r.width()), round(r.height())]
+        win = NoteWindow(self, note)
+        win.show()
+        self.windows[note["id"]] = win
+        return win
+
+    def peeled(self, rect: QRectF) -> None:
+        """The top sheet landed: pin it there."""
+        r = self._inside(rect)
+        note = self.store.peel((round(r.x()), round(r.y()), round(r.width()), round(r.height())))
+        self.store.wrote()
+        win = self.open_note(note)
+        win.raise_()
+        self.changed()
+        self._refresh_settings()
+
+    def crumple(self, win: NoteWindow, finished: bool) -> None:
+        note = win.note
+        r = win.global_paper()
+        dpr = max(1.0, win.devicePixelRatioF())
+        front, back = note_images(note, self.skin, round(r.width()), round(r.height()), dpr)
+        stage = self.stages.at(r.center())
+        stage.add(CrumpleActor(r, front, back, dpr, note["id"]))
+        QTimer.singleShot(30, win.close)
+        QTimer.singleShot(60, win.deleteLater)
+        self.windows.pop(note["id"], None)
+        self.store.close(note, finished)
+        self.changed()
+        self._refresh_settings()
+
+    def free_spot(self, pad_paper: QRectF) -> QPointF:
+        """Where Ctrl+Enter drops a sheet: beside the pad, stepping down past notes already there."""
+        x = pad_paper.left() - pad_paper.width() - 40
+        screen = QGuiApplication.screenAt(pad_paper.center().toPoint()) or QGuiApplication.primaryScreen()
+        if x < screen.availableGeometry().left():
+            x = pad_paper.right() + 40
+        y = pad_paper.top()
+        taken = [w.global_paper() for w in self.windows.values()]
+        while any(abs(t.left() - x) < 24 and abs(t.top() - y) < 24 for t in taken):
+            y += 34
+            x += 12
+        r = self._inside(QRectF(x, y, pad_paper.width(), pad_paper.height()))
+        return r.topLeft()
+
+    # ---------------------------------------------------------------- look
+    def set_skin(self, key: str) -> None:
+        self.skin = skin_for(key, self.skins_dir)
+        self.store.data["skin"] = self.skin.key
+        self.pad.resize_for_skin()
+        for win in self.windows.values():
+            if self.skin.aspect:
+                r = win.paper_rect()
+                win.resize(round(r.width() + 2 * MARGIN), round(r.width() / self.skin.aspect + 2 * MARGIN))
+            win.refresh_look()
+        self.changed()
+        if self.settings:
+            self.settings.fill_skins()
+
+    def set_ink(self, mode: str) -> None:
+        self.store.data["ink"] = mode
+        self.ink = self._ink(mode)
+        self.pad.refresh_look()
+        for win in self.windows.values():
+            win.refresh_look()
+        self.changed()
+
+    def set_pad_on_top(self, on: bool) -> None:
+        self.store.data["pad"]["on_top"] = bool(on)
+        self.pad.set_on_top(bool(on))
+        self.changed()
+
+    # ---------------------------------------------------------------- start with Windows
+    @staticmethod
+    def _command() -> str:
+        if getattr(sys, "frozen", False):
+            return f'"{sys.executable}"'
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        root = Path(__file__).resolve().parent.parent
+        return f'"{pythonw}" -c "import sys; sys.path.insert(0, r\'{root}\'); from peelpad.app import main; main()"'
+
+    def startup_enabled(self) -> bool:
+        if sys.platform != "win32":
+            return False
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
+                winreg.QueryValueEx(key, "Peelpad")
+                return True
+        except OSError:
+            return False
+
+    def set_startup(self, on: bool) -> None:
+        if sys.platform != "win32":
+            return
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+                if on:
+                    winreg.SetValueEx(key, "Peelpad", 0, winreg.REG_SZ, self._command())
+                else:
+                    winreg.DeleteValue(key, "Peelpad")
+        except OSError:
+            pass
+
+    # ---------------------------------------------------------------- windows and tray
+    def show_pad(self) -> None:
+        self.pad.show()
+        self.pad.raise_()
+        self.pad.activateWindow()
+
+    def show_settings(self, tab: str = "stats") -> None:
+        if self.settings is None:
+            from peelpad.settings import Settings
+            self.settings = Settings(self)
+        self.settings.open(tab if isinstance(tab, str) else "stats")
+
+    def _refresh_settings(self) -> None:
+        if self.settings and self.settings.isVisible():
+            self.settings.refresh_stats()
+
+    def _tray(self) -> None:
+        self.tray = QSystemTrayIcon(app_icon(), self)
+        self.tray.setToolTip("Peelpad")
+        menu = QMenu()
+        for text, slot in (("Show the pad", self.show_pad), ("Settings && stats", self.show_settings)):
+            act = QAction(text, menu)
+            act.triggered.connect(lambda _=False, s=slot: s())
+            menu.addAction(act)
+        menu.addSeparator()
+        quit_act = QAction("Quit Peelpad", menu)
+        quit_act.triggered.connect(self.quit)
+        menu.addAction(quit_act)
+        self.tray_menu = menu
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(
+            lambda reason: self.show_pad() if reason in (QSystemTrayIcon.ActivationReason.Trigger,
+                                                         QSystemTrayIcon.ActivationReason.DoubleClick) else None)
+        self.tray.show()
+
+    def quit(self) -> None:
+        self.store.save()
+        self.tray.hide()
+        self.qapp.quit()
+
+
+def _already_running() -> bool:
+    """Ask a Peelpad that is already open to show its pad."""
+    sock = QLocalSocket()
+    sock.connectToServer(APP_ID)
+    if sock.waitForConnected(300):
+        sock.write(b"show")
+        sock.waitForBytesWritten(300)
+        sock.disconnectFromServer()
+        return True
+    return False
+
+
+def main() -> None:
+    if sys.platform == "win32":
+        # its own taskbar button and icon, not python.exe's
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    qapp = QApplication.instance() or QApplication(sys.argv)
+    qapp.setApplicationName("Peelpad")
+    qapp.setWindowIcon(app_icon())
+    qapp.setQuitOnLastWindowClosed(False)
+    if _already_running():
+        sys.exit(0)
+    server = QLocalServer()
+    QLocalServer.removeServer(APP_ID)
+    server.listen(APP_ID)
+    app = App(qapp)
+    server.newConnection.connect(lambda: (server.nextPendingConnection(), app.show_pad()))
+    qapp.aboutToQuit.connect(app.store.save)
+    sys.exit(qapp.exec())
+
+
+if __name__ == "__main__":
+    main()

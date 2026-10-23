@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "peelpad"
+version = "1.0.0"
+description = "Physics sticky notes for Windows: peel a note off the pad, pin it anywhere on top, check off tasks and watch it crumple."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6-Essentials>=6.7",
+    "Pillow>=11.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.gui-scripts]
+peelpad = "peelpad.app:main"
+
+[tool.setuptools.packages.find]
+include = ["peelpad*"]
