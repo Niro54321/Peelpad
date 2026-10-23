@@ -245,10 +245,10 @@ class NoteWindow(Paper):
         self.wind_clock = QElapsedTimer()
         self.wind_clock.start()
         self.wind_timer = QTimer(self)
-        self.wind_timer.setInterval(33)
+        self.wind_timer.setInterval(40)
         self.wind_timer.timeout.connect(self._blow)
-        self._writing_key = self._masks_key = None
-        self._writing_img = self._masks = None
+        self._writing_key = self._masks_key = self._front_key = None
+        self._writing_img = self._masks = self._front_img = None
         self.place_at(QRectF(*note["rect"]))
         self.bind()
         self.update_wind()
@@ -312,12 +312,15 @@ class NoteWindow(Paper):
         if key != self._writing_key:
             self._writing_img = writing_layer(self.note, self.skin(), w, h, dpr)
             self._writing_key = key
+        if (key, self._cache_key) == self._front_key:    # same writing on the same paper frame
+            return self._front_img
         front = QImage(self._writing_img.size(), QImage.Format.Format_ARGB32_Premultiplied)
         front.fill(Qt.GlobalColor.transparent)
         p = QPainter(front)
         p.drawImage(QRectF(0, 0, front.width(), front.height()), self._paper)
         p.drawImage(0, 0, self._writing_img)
         p.end()
+        self._front_img, self._front_key = front, (key, self._cache_key)
         return front
 
     def _paint_blowing(self, p: QPainter) -> None:
