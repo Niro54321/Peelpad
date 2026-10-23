@@ -294,12 +294,12 @@ def picture_skin(path: Path) -> PictureSkin:
 
 
 def all_skins(folder: Path, mine: dict | None = None) -> list[Skin]:
-    from peelpad.animated import SkullParade
+    from peelpad.animated import AppleWorm, SkullParade
 
     skins: list[Skin] = [Skin()] + [Skin(cycle=False, solid=i) for i in range(NEON_COUNT)]
     skins += [ColorSkin(*t) for t in THEMES]
     skins.append(mine_skin(mine or {}))
-    skins.append(SkullParade())
+    skins += [SkullParade(), AppleWorm()]
     for f in picture_files(folder):
         try:
             skins.append(picture_skin(f))
@@ -326,10 +326,10 @@ def _skin_for(key: str, folder: Path, mine: dict | None = None) -> Skin:
         return next((ColorSkin(*t) for t in THEMES if t[0] == key), Skin())
     if key == "mine":
         return mine_skin(mine or {})
-    if key == "anim:skulls":
-        from peelpad.animated import SkullParade
+    if key in ("anim:skulls", "anim:worm"):
+        from peelpad.animated import AppleWorm, SkullParade
 
-        return SkullParade()
+        return SkullParade() if key == "anim:skulls" else AppleWorm()
     if key.startswith("custom:"):
         try:
             return picture_skin(folder / key[7:])
@@ -561,6 +561,19 @@ def paint_writing(p: QPainter, note: dict, skin: Skin, w: float, h: float, dpr: 
     p.drawImage(0, 0, halo)
     p.drawImage(0, 0, layer)
     p.restore()
+
+
+def writing_layer(note: dict, skin: Skin, w: int, h: int, dpr: float = 1.0) -> QImage:
+    """Just the writing (with its effect and glow) on a clear picture, dpr x the note's size."""
+    img = QImage(max(1, round(w * dpr)), max(1, round(h * dpr)), QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(Qt.GlobalColor.transparent)
+    p = QPainter(img)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+    p.scale(dpr, dpr)
+    paint_writing(p, note, skin, w, h, dpr)
+    p.end()
+    return img
 
 
 def note_images(note: dict, skin: Skin, w: int, h: int, dpr: float = 1.0) -> tuple[QImage, QImage]:

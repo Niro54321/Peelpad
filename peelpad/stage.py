@@ -69,31 +69,72 @@ class Painted:
         self.bounds = QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)) if xs else QRectF()
 
 
+class Masks:
+    """The sheet's own shape, as textures: shading and shadows are painted through
+    them, so a shaped skin never gets a dark or light square around it."""
+
+    def __init__(self, front: QImage, k: float):
+        from PIL import Image, ImageFilter
+
+        self.black = self._solid(front, QColor(0, 0, 0))
+        self.white = self._solid(front, QColor(255, 255, 255))
+        rgba = front.convertToFormat(QImage.Format.Format_RGBA8888)
+        a = Image.frombuffer("RGBA", (rgba.width(), rgba.height()), bytes(rgba.constBits()), "raw", "RGBA",
+                             rgba.bytesPerLine(), 1).getchannel("A").filter(ImageFilter.GaussianBlur(5 * k))
+        blur = Image.merge("RGBA", (Image.new("L", a.size, 0),) * 3 + (a,))
+        self.shadow = QImage(blur.tobytes(), blur.width, blur.height, blur.width * 4,
+                             QImage.Format.Format_RGBA8888).copy()
+
+    @staticmethod
+    def _solid(front: QImage, color: QColor) -> QImage:
+        img = QImage(front.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(color)
+        p = QPainter(img)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+        p.drawImage(0, 0, front)
+        p.end()
+        return img
+
+
 def paint_bands(p: QPainter, painted: Painted, front: QImage, back: QImage, origin: QPointF,
-                shadow: float = 1.0) -> None:
+                masks: Masks | None = None, shadow: float = 1.0) -> None:
+    masks = masks or Masks(front, painted.k)
     base = QTransform.fromTranslate(-origin.x(), -origin.y())
     fb, bb = QBrush(front), QBrush(back)
     p.setPen(Qt.PenStyle.NoPen)
-    # shadows of the lifted parts first, soft by stacking a few
-    if shadow > 0:
-        for band, t, poly, screen in painted.items:
-            if band.z <= 0.5:
-                continue
-            for spread, alpha in ((1.0, 7), (0.8, 7), (0.6, 8), (0.4, 9), (0.2, 10)):
-                off = QPointF(band.z * 0.14 * spread + 1, band.z * 0.24 * spread + 1.5)
-                p.setTransform(base)
-                p.setBrush(QColor(0, 0, 0, int(alpha * shadow)))
-                p.drawPolygon(screen.translated(off))
+    # the shadow of the lifted parts first: one piece, in the sheet's own shape, softly blurred
+    lifted = [(band, t, poly) for band, t, poly, _ in painted.items if band.z > 0.5]
+    if shadow > 0 and lifted and not painted.bounds.isEmpty():
+        z = sum(b.z for b, _, _ in lifted) / len(lifted)
+        box = painted.bounds.adjusted(-2, -2, 2, 2).toAlignedRect()
+        layer = QImage(box.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        layer.fill(Qt.GlobalColor.transparent)
+        q = QPainter(layer)
+        q.setRenderHint(QPainter.RenderHint.Antialiasing)
+        q.setPen(Qt.PenStyle.NoPen)
+        q.setBrush(QBrush(masks.shadow))
+        # strips overlap a hair; Source keeps the overlap from darkening into lines
+        q.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        to_layer = QTransform.fromTranslate(-box.left(), -box.top())
+        for band, t, poly in lifted:
+            q.setTransform(t * to_layer)
+            q.drawPolygon(poly)
+        q.end()
+        p.setTransform(base)
+        p.setOpacity(0.32 * shadow)
+        p.drawImage(QPointF(box.left() + z * 0.16 + 1, box.top() + z * 0.28 + 2), layer)
+        p.setOpacity(1.0)
     fold = painted.shape.fold_line
+    black, white = QBrush(masks.black), QBrush(masks.white)
     for band, t, poly, screen in painted.items:
         p.setTransform(t * base)
         p.setBrush(bb if band.back else fb)
         p.drawPolygon(poly)
         if abs(band.shade) > 0.01:
-            c = QColor(255, 255, 255) if band.shade > 0 else QColor(0, 0, 0)
-            c.setAlphaF(min(1.0, abs(band.shade)))
-            p.setBrush(c)
+            p.setOpacity(min(1.0, abs(band.shade)))
+            p.setBrush(white if band.shade > 0 else black)
             p.drawPolygon(poly)
+            p.setOpacity(1.0)
         if fold is not None and band.z == 0.0:
             _curl_shadow(p, band, fold, t, base, painted.k)
 
@@ -111,7 +152,10 @@ def _curl_shadow(p: QPainter, band, fold, t: QTransform, base: QTransform, k: fl
     g.setColorAt(1, QColor(0, 0, 0, 60))
     p.setTransform(t * base)
     p.setBrush(QBrush(g))
+    # only on the paper just drawn, not on the see-through parts around a shaped skin
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
     p.drawPolygon(_poly(strip, k))
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
 
 
 def left_button_down() -> bool:
@@ -134,13 +178,17 @@ class Stage(QWidget):
 
     ROOM = 160
 
-    def __init__(self, stages: "Stages", follow: bool):
-        super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
-                         | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowTransparentForInput
-                         | Qt.WindowType.NoDropShadowWindowHint)
+    def __init__(self, stages: "Stages", follow: bool, catch: bool = False):
+        flags = (Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
+                 | Qt.WindowType.NoDropShadowWindowHint)
+        if not catch:
+            flags |= Qt.WindowType.WindowTransparentForInput
+        super().__init__(None, flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.stages, self.follow = stages, follow
+        self.stages, self.follow, self.catch = stages, follow, catch
+        if catch:
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
         self.actors: list = []
         self.timer = QTimer(self)
         self.timer.setTimerType(Qt.TimerType.PreciseTimer)
@@ -205,10 +253,17 @@ class Stage(QWidget):
         self.dirty = needed
         self.update(area.translated(-QPointF(self.geometry().topLeft())).toAlignedRect())
 
+    def mousePressEvent(self, event):
+        # a sheet that follows the mouse (after a double-click) lands on the next click
+        for a in self.actors:
+            if getattr(a, "sticky", False):
+                a.release()
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-        p.fillRect(event.rect(), Qt.GlobalColor.transparent)
+        # (nearly invisible when it has to catch the click that drops the sheet)
+        p.fillRect(event.rect(), QColor(0, 0, 0, 1) if self.catch else Qt.GlobalColor.transparent)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
@@ -224,8 +279,8 @@ class Stages:
     def __init__(self):
         self.live: set[Stage] = set()
 
-    def at(self, global_pt: QPointF | None = None, follow: bool = False) -> Stage:
-        stage = Stage(self, follow)
+    def at(self, global_pt: QPointF | None = None, follow: bool = False, catch: bool = False) -> Stage:
+        stage = Stage(self, follow, catch)
         self.live.add(stage)
         return stage
 
@@ -252,14 +307,17 @@ class PeelActor:
     TEAR_SHEET = 0.86          # it lets go once this much of the sheet has peeled up
 
     def __init__(self, sheet: QRectF, grab: QPointF, front: QImage, back: QImage, k: float, glue: float,
-                 on_landed, on_returned, on_torn=None, carry: bool = False, follow: bool = False):
+                 on_landed, on_returned, on_torn=None, carry: bool = False, follow: bool = False,
+                 sticky: bool = False):
         self.stage: Stage | None = None
         self.sheet = QRectF(sheet)
         self.w, self.h = sheet.width(), sheet.height()
         self.g = (grab.x() - sheet.left(), grab.y() - sheet.top())
         self.front, self.back, self.k, self.glue = front, back, k, glue
+        self.masks = Masks(front, k)
         self.on_landed, self.on_returned, self.on_torn = on_landed, on_returned, on_torn
         self.follow = follow           # read the real mouse every frame
+        self.sticky = sticky           # follows without a button held, lands on the next click
         self.cursor = QPointF(grab)
         self.r = min(self.w, self.h) * 0.075
         self.painted: Painted | None = None
@@ -311,7 +369,7 @@ class PeelActor:
     def step(self, dt: float) -> bool:
         if self.follow and self.state in ("peel", "carry"):
             self.cursor = QPointF(QCursor.pos())
-            if dt > 0 and not left_button_down():
+            if dt > 0 and not self.sticky and not left_button_down():
                 self.release()
         if self.state == "peel":
             c = self._local()
@@ -392,7 +450,7 @@ class PeelActor:
 
     def paint(self, p: QPainter, origin: QPointF) -> None:
         if self.painted:
-            paint_bands(p, self.painted, self.front, self.back, origin)
+            paint_bands(p, self.painted, self.front, self.back, origin, self.masks)
             p.resetTransform()
 
 
@@ -405,6 +463,7 @@ class CrumpleActor:
         self.stage = None
         self.sheet = QRectF(sheet)
         self.front, self.back, self.k = front, back, k
+        self.masks = Masks(front, k)
         self.model = physics.Crumple(sheet.width(), sheet.height(), seed)
         self.on_done = on_done
         self.t = 0.0
@@ -451,6 +510,7 @@ class CrumpleActor:
         p.drawEllipse(centre, sw * 0.6, sw * 0.6)
         base = QTransform.fromTranslate(c.x(), c.y()).scale(self.scale, self.scale)
         fb, bb = QBrush(self.front), QBrush(self.back)
+        black, white = QBrush(self.masks.black), QBrush(self.masks.white)
         k = self.k
         for f in self.facets:
             cx = sum(x for x, _ in f.src) / 3
@@ -463,9 +523,9 @@ class CrumpleActor:
             p.setBrush(bb if f.back else fb)
             p.drawPolygon(poly)
             if abs(f.shade) > 0.01:
-                col = QColor(255, 255, 255) if f.shade > 0 else QColor(0, 0, 0)
-                col.setAlphaF(min(1.0, abs(f.shade)))
-                p.setBrush(col)
+                p.setOpacity(self.opacity * min(1.0, abs(f.shade)))
+                p.setBrush(white if f.shade > 0 else black)
                 p.drawPolygon(poly)
+                p.setOpacity(self.opacity)
         p.resetTransform()
         p.setOpacity(1.0)

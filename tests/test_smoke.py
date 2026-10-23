@@ -334,6 +334,9 @@ def test_pinned_note_resize_mode():
         skin = skins.Skin()
         stages = None
 
+        def wind_speed(self):
+            return 0.0
+
         def __getattr__(self, name):
             return lambda *a, **k: None
 
@@ -405,5 +408,57 @@ def test_skull_parade_moves():
     calm = skins.safe_rect(200, 200, sk.area)
     a, b = frame(0.5), frame(2.0)
     assert all(a.pixelColor(x, y) == b.pixelColor(x, y)        # nothing moves where the text goes
+               for x in range(int(calm.left()), int(calm.right()), 7)
+               for y in range(int(calm.top()), int(calm.bottom()), 7))
+
+
+def test_wind_bends_the_free_part_and_keeps_the_glue():
+    calm = physics.wind(300, 300, 48, 1.0, 0.0)
+    assert len(calm.bands) == 1
+    shape = physics.wind(300, 300, 48, 1.0, physics.MAX_WIND, seed=0.4, grow=0.08)
+    glued = shape.bands[0]
+    assert glued.dst == glued.src and max(y for _, y in glued.poly) <= 48 + 1e-6
+    lifted = [b.z for b in shape.bands[1:]]
+    assert lifted[-1] > lifted[0] >= 0                       # further from the glue, higher
+    xs = [x for b in shape.bands for x, _ in b.dst]
+    assert max(xs) - min(xs) < 300 * 1.12                    # never grows past what was allowed
+    strong = physics.wind(300, 300, 48, 1.0, physics.MAX_WIND, seed=0.4).bands[-1].z
+    gentle = physics.wind(300, 300, 48, 1.0, physics.MAX_WIND / 4, seed=0.4).bands[-1].z
+    assert strong > gentle
+
+
+def test_double_click_carry_waits_for_a_click():
+    from peelpad.stage import PeelActor
+
+    front, back = skins.note_images(note_with("x"), skins.Skin(), 200, 200, 1.0)
+    landed = []
+    a = PeelActor(QRectF(0, 0, 200, 200), QPointF(100, 100), front, back, 1.0, 0, landed.append, lambda: None,
+                  carry=True, follow=True, sticky=True)
+    for _ in range(30):
+        a.step(1 / 60)                       # no button is held, and still it keeps following
+    assert a.state == "carry" and not landed
+    a.release()                              # the click on the stage
+    for _ in range(40):
+        a.step(1 / 60)
+    assert landed
+
+
+def test_apple_worm_crawls_and_keeps_the_middle_calm():
+    from peelpad.animated import AppleWorm
+
+    sk = AppleWorm()
+    assert skins.skin_for("anim:worm", Path(".")).key == "anim:worm"
+
+    def frame(t):
+        img = QImage(240, 240, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        p = QPainter(img)
+        sk.paint_front(p, 240, 240, 0, t=t)
+        p.end()
+        return img
+    a, b = frame(1.0), frame(5.0)
+    assert a != b
+    calm = skins.safe_rect(240, 240, sk.area)
+    assert all(a.pixelColor(x, y) == b.pixelColor(x, y)
                for x in range(int(calm.left()), int(calm.right()), 7)
                for y in range(int(calm.top()), int(calm.bottom()), 7))

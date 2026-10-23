@@ -55,7 +55,9 @@ DEFAULTS = {"version": 1, "skin": "neon", "notes": [], "days": [],
             "note_size": 300,           # width of the pad's sheets, px
             "mine": {"paper": "#1B1E2B", "ink": "#7DF9FF", "glow": True},   # "Your colours" theme
             "areas": {},                # skin key -> where its text box is, if you moved it
-            "checked_skins": []}        # skins already checked for a painted-in checkerboard
+            "checked_skins": [],        # skins already checked for a painted-in checkerboard
+            "wind": True,               # pinned notes sway in the wind
+            "wind_speed": 3.6}          # m/s, up to 7.2
 
 
 class Store:

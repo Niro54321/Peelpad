@@ -254,6 +254,67 @@ def flutter(w: float, h: float, grab: P, at: P, angle: float, wave: float, phase
     return Shape(out)
 
 
+MAX_WIND = 7.2          # m/s, the strongest wind Settings offers
+
+
+def _arc(phi: float, length: float, s: float) -> tuple[float, float]:
+    """A sheet bent with even curvature, turning by `phi` over `length`: (along, up) at arc s."""
+    if phi < 1e-6:
+        return s, 0.0
+    radius = length / phi
+    return radius * math.sin(s / radius), radius * (1 - math.cos(s / radius))
+
+
+def gust(t: float, seed: float) -> float:
+    """How hard the wind blows right now, 0.15..1 of its speed: slow swells and quick gusts."""
+    swell = 0.5 + 0.5 * math.sin(t * 0.55 + seed) * math.sin(t * 0.23 + seed * 2.1)
+    flick = 0.5 + 0.5 * math.sin(t * 2.7 + seed * 3.3)
+    return 0.15 + 0.85 * (0.75 * swell + 0.25 * flick)
+
+
+def wind(w: float, h: float, glue: float, t: float, speed: float, seed: float = 0.0,
+         grow: float = 0.08, rows: int = 14) -> Shape:
+    """A sheet glued along its top, blowing in the wind (from the left). The free part
+    bends up towards you, the further from the glue the more, ripples, and its
+    corners flap a little out of step. `grow` caps how much bigger it may look."""
+    strength = max(0.0, min(1.0, speed / MAX_WIND))
+    if strength <= 0 or h - glue < 4:
+        return identity(w, h)
+    g = gust(t, seed) * strength
+    free = h - glue
+    height = max(w, h) * 2.4
+    zmax = height * (1 - 1 / (1 + grow))                 # perspective may enlarge it by `grow` at most
+    bend = 0.85 * g                                      # radians at the bottom edge
+    cam = (w / 2, h / 2)
+
+    def corner(u: float, v: float) -> tuple[P, float]:
+        s = max(0.0, (v - glue) / free)
+        along, up = _arc(bend, free, s * free)
+        ripple = 0.035 * h * strength * s * math.sin(2 * math.pi * (s * 1.1 - t * 1.4) + u / w * 1.8 + seed)
+        twist = 0.06 * h * g * s * (u / w - 0.5) * math.sin(t * 2.2 + seed * 1.7)
+        z = min(zmax, max(0.0, up + ripple + twist))
+        sway = w * 0.03 * g * s * s + w * 0.008 * strength * s * math.sin(t * 3.1 + seed)
+        x, y = u + sway, glue + along
+        k = height / (height - z)
+        return (cam[0] + (x - cam[0]) * k, cam[1] + (y - cam[1]) * k), z
+
+    sheet = _rect(w, h)
+    out = [Band(clip(sheet, (0.0, 1.0), glue, False), sheet, sheet, 0.0, False, 0.0)]
+    seam = 0.6
+    for i in range(rows):
+        v0, v1 = glue + free * i / rows, glue + free * (i + 1) / rows
+        poly = slab(sheet, (0.0, 1.0), v0 - (seam if i else 0), v1 + seam)
+        if len(poly) < 3:
+            continue
+        (a, za), (b, zb) = corner(0, v0), corner(w, v0)
+        (c, zc), (d, zd) = corner(w, v1), corner(0, v1)
+        slope = ((zc + zd) - (za + zb)) / 2 / (v1 - v0)
+        shade = max(-0.3, min(0.28, slope * 0.55))      # tilted up to the light: brighter
+        src = [(0.0, v0), (w, v0), (w, v1), (0.0, v1)]
+        out.append(Band(poly, src, [a, b, c, d], shade, False, (za + zb + zc + zd) / 4))
+    return Shape(out)
+
+
 def move_shape(shape: Shape, fn) -> Shape:
     """Move every band's landing corners with fn (an affine map, like a turn and a shift)."""
     for b in shape.bands:

@@ -264,3 +264,163 @@ class SkullParade(Skin):
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
         p.fillRect(QRectF(0, 0, w, h), QColor(255, 255, 255, 150))
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+
+
+# ---------------------------------------------------------------- Peelpad's own: Apple worm
+
+LEAF = QColor("#4CBF4A")
+WORM = QColor("#8EE04F")
+WORM_DARK = QColor("#3E8A2A")
+APPLE = QColor("#F2443B")
+
+
+def _apple(p: QPainter, c: QPointF, r: float, bitten: float = 0.0) -> None:
+    """An apple; `bitten` 0..1 takes bites out of its side until it is gone."""
+    if r <= 0.5:
+        return
+    p.save()
+    body = QPainterPath()
+    body.addEllipse(c, r * 0.82, r * 0.74)
+    dent = QPainterPath()
+    dent.addEllipse(QPointF(c.x(), c.y() - r * 0.86), r * 0.2, r * 0.2)
+    body = body.subtracted(dent)
+    for i in range(int(bitten * 4)):
+        bite = QPainterPath()
+        bite.addEllipse(QPointF(c.x() + r * (0.95 - i * 0.28), c.y() + r * (0.35 - i * 0.3)), r * 0.42, r * 0.42)
+        body = body.subtracted(bite)
+    p.setPen(QPen(FRAME, r * 0.14))
+    p.setBrush(APPLE)
+    p.drawPath(body)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(255, 255, 255, 150))
+    p.drawEllipse(QPointF(c.x() - r * 0.38, c.y() - r * 0.28), r * 0.14, r * 0.2)
+    p.setPen(QPen(FRAME, r * 0.14, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    p.drawLine(QPointF(c.x(), c.y() - r * 0.55), QPointF(c.x() + r * 0.1, c.y() - r * 0.95))
+    leaf = QPainterPath()
+    leaf.moveTo(c.x() + r * 0.08, c.y() - r * 0.8)
+    leaf.quadTo(QPointF(c.x() + r * 0.7, c.y() - r * 1.15), QPointF(c.x() + r * 0.75, c.y() - r * 0.7))
+    leaf.quadTo(QPointF(c.x() + r * 0.35, c.y() - r * 0.6), QPointF(c.x() + r * 0.08, c.y() - r * 0.8))
+    p.setPen(QPen(FRAME, r * 0.1))
+    p.setBrush(LEAF)
+    p.drawPath(leaf)
+    p.restore()
+
+
+class AppleWorm(Skin):
+    """A cream card in a black frame with apples on it. A little green worm crawls
+    all the way round the frame (right, down, left, up) and munches every apple it
+    meets; the apples grow back after it has gone."""
+
+    key = "anim:worm"
+    name = "Apple worm (animated)"
+    animated = True
+    frame_ms = 33
+    LOOP = 14.0               # seconds for one trip round the frame
+    APPLES = (0.05, 0.2, 0.33, 0.47, 0.6, 0.72, 0.86)
+    SEGMENTS = 9
+
+    def __init__(self):
+        super().__init__(cycle=False)
+        self.key, self.name = AppleWorm.key, AppleWorm.name
+        self.area = self.auto_area = (0.17, 0.2, 0.83, 0.8)
+
+    def ink(self, color: int) -> QColor:
+        return QColor(INK)
+
+    def color(self, color: int) -> QColor:
+        return QColor(CREAM)
+
+    def frame_id(self) -> int:
+        return int(now_ms() // self.frame_ms)
+
+    @staticmethod
+    def _track(outer: QRectF, s: float) -> QPainterPath:
+        """The middle of the black frame, where the worm crawls."""
+        lane = outer.adjusted(s * 0.055, s * 0.055, -s * 0.055, -s * 0.055)
+        path = QPainterPath()
+        path.addRoundedRect(lane, s * 0.07, s * 0.07)
+        return path
+
+    def paint_front(self, p: QPainter, w: float, h: float, color: int, t: float | None = None) -> None:
+        t = now_ms() / 1000 if t is None else t
+        s = min(w, h)
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        outer = QRectF(0, 0, w, h).adjusted(s * 0.025, s * 0.025, -s * 0.025, -s * 0.025)
+        # a black frame with a gently wavy outside edge
+        frame = QPainterPath()
+        frame.addRoundedRect(outer, s * 0.09, s * 0.09)
+        bumps = QPainterPath()
+        for i in range(14):
+            k = (i + 0.5) / 14
+            for pt in (QPointF(outer.left() + k * outer.width(), outer.top() + s * 0.012),
+                       QPointF(outer.left() + k * outer.width(), outer.bottom() - s * 0.012),
+                       QPointF(outer.left() + s * 0.012, outer.top() + k * outer.height()),
+                       QPointF(outer.right() - s * 0.012, outer.top() + k * outer.height())):
+                bumps.addEllipse(pt, s * 0.03, s * 0.03)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(FRAME)
+        p.drawPath(frame.united(bumps))
+        card = outer.adjusted(s * 0.11, s * 0.11, -s * 0.11, -s * 0.11)
+        p.setBrush(CREAM)
+        p.drawRoundedRect(card, s * 0.05, s * 0.05)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor("#B89A6A"), max(1.0, s * 0.006), Qt.PenStyle.DashLine))
+        p.drawRoundedRect(card.adjusted(s * 0.022, s * 0.022, -s * 0.022, -s * 0.022), s * 0.04, s * 0.04)
+        track = self._track(outer, s)
+        head = (t / self.LOOP) % 1.0
+        # the apples: eaten when the head reaches them, back again once the worm has gone
+        for a in self.APPLES:
+            since = (head - a) % 1.0
+            pos = track.pointAtPercent(a)
+            if since < 0.03:
+                _apple(p, pos, s * 0.045, bitten=since / 0.03)
+            elif since > 0.55:
+                _apple(p, pos, s * 0.045 * min(1.0, (since - 0.55) / 0.1))
+        # the worm: a head and a body that follows the track, wiggling as it goes
+        step = 0.018
+        munch = any((head - a) % 1.0 < 0.03 for a in self.APPLES)
+        for i in range(self.SEGMENTS, -1, -1):
+            at = (head - i * step) % 1.0
+            pt = track.pointAtPercent(at)
+            angle = math.radians(track.angleAtPercent(at))
+            wiggle = math.sin(t * 9 - i * 0.9) * s * 0.008
+            pt = QPointF(pt.x() - math.sin(angle) * wiggle, pt.y() - math.cos(angle) * wiggle)
+            r = s * (0.04 if i == 0 else 0.034 - i * 0.0012)
+            p.setPen(QPen(WORM_DARK, s * 0.006))
+            p.setBrush(WORM if i % 2 == 0 else WORM.lighter(112))
+            p.drawEllipse(pt, r, r)
+            if i == 0:
+                self._face(p, pt, r, angle, munch, t)
+        p.restore()
+
+    @staticmethod
+    def _face(p: QPainter, c: QPointF, r: float, angle: float, munch: bool, t: float) -> None:
+        ahead = QPointF(math.cos(angle), -math.sin(angle))          # angleAtPercent turns anticlockwise
+        side = QPointF(-ahead.y(), ahead.x())
+        p.setPen(QPen(WORM_DARK, r * 0.12, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        for k in (-1, 1):                                            # antennae
+            base = c + side * (k * r * 0.4) - ahead * (r * 0.1)
+            tip = base + side * (k * r * 0.35) + QPointF(0, -r * 0.9)
+            p.drawLine(base, tip)
+            p.setBrush(APPLE)
+            p.drawEllipse(tip, r * 0.14, r * 0.14)
+        p.setPen(Qt.PenStyle.NoPen)
+        for k in (-1, 1):                                            # eyes, looking where it goes
+            eye = c + ahead * (r * 0.3) + side * (k * r * 0.33)
+            p.setBrush(QColor("white"))
+            p.drawEllipse(eye, r * 0.26, r * 0.26)
+            p.setBrush(FRAME)
+            p.drawEllipse(eye + ahead * (r * 0.09), r * 0.13, r * 0.13)
+        p.setBrush(BLUSH)
+        for k in (-1, 1):
+            p.drawEllipse(c + side * (k * r * 0.62) - ahead * (r * 0.05), r * 0.13, r * 0.09)
+        p.setBrush(FRAME)
+        opening = abs(math.sin(t * 16)) if munch else 0.15
+        p.drawEllipse(c + ahead * (r * 0.72), r * 0.16, r * (0.05 + 0.18 * opening))
+
+    def paint_back(self, p: QPainter, w: float, h: float, color: int) -> None:
+        self.paint_front(p, w, h, color, t=0.0)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
+        p.fillRect(QRectF(0, 0, w, h), QColor(255, 255, 255, 150))
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)

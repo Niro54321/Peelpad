@@ -16,10 +16,15 @@ off every task, the note crumples into a ball and disappears.
   springs back onto the pad.
 - **Pinned anywhere, any size.** A torn-off note lands where you drop it and
   stays on top of every app. You can have as many as you like. Pick one up by
-  its paper and it swings like a sheet from the pad. To resize it, press ↕
+  its paper and it swings like a sheet from the pad, or double-click it: it
+  follows your mouse with no button held and lands where you click. To resize it, press ↕
   under it, drag the handles (Shift keeps its shape) and press ✓. Or hold Ctrl
   and turn the mouse wheel over it. Ctrl + wheel over the pad changes the size
   of its sheets.
+- **Wind.** Pinned notes sway in a gusty breeze, glued along their top: the free
+  part lifts toward you, ripples and flaps. Move the mouse onto a note and it
+  holds still so you can write. Turn it off or set its speed (up to 7.2 m/s) in
+  Settings → General.
 - **Tasks and text.** Every row has a check box. Right-click the box to make the
   row a plain line instead. Arabic and other right-to-left text works.
 - **Crumple when done.** Check off the last task and the note scrunches into a
@@ -62,8 +67,10 @@ checkerboard painted in. Peelpad spots that and makes it truly see-through.
 area marked. Paint over it in any editor, then upload it.
 
 **Animated skins.** Upload an animated GIF, APNG or WebP and it plays on every
-note, looping. Peelpad comes with one: *Skull parade*, a little skull running
-along the bottom of a cream card while a bat flaps and the stars twinkle.
+note, looping. Peelpad comes with two: *Skull parade*, a little skull running
+along the bottom of a cream card while a bat flaps and the stars twinkle, and
+*Apple worm*, a green worm crawling all the way round a black frame, munching
+the apples on it (they grow back).
 Settings → Look → **Copy a prompt for an animated skin** gives you a ready
 brief to paste into an AI animation tool (or send to an artist). It is also in
 [docs/animated-skin-prompt.md](docs/animated-skin-prompt.md).

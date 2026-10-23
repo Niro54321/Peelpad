@@ -181,6 +181,20 @@ class App(QObject):
             self.set_skin(key)
         self.changed()
 
+    def wind_speed(self) -> float:
+        """How hard the wind blows on pinned notes, m/s (0 when it's off)."""
+        d = self.store.data
+        return float(d.get("wind_speed", 3.6)) if d.get("wind", True) else 0.0
+
+    def set_wind(self, on: bool | None = None, speed: float | None = None) -> None:
+        if on is not None:
+            self.store.data["wind"] = bool(on)
+        if speed is not None:
+            self.store.data["wind_speed"] = round(max(0.0, min(7.2, speed)), 1)
+        for win in self.windows.values():
+            win.update_wind()
+        self.changed()
+
     def set_writing(self, key: str, value) -> None:
         """ink, effect, font or text_scale."""
         self.store.data[key] = value

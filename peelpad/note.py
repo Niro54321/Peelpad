@@ -7,13 +7,14 @@ When every task is checked it crumples.
 from __future__ import annotations
 
 from PIL import Image, ImageFilter
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QElapsedTimer, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPen, QRadialGradient
-from PySide6.QtWidgets import QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
-from peelpad import store
+from peelpad import physics, store
 from peelpad.editor import TaskEditor
-from peelpad.skins import NEON, PictureSkin, Skin, font_px, note_images, safe_rect, text_effect, writing_colors
+from peelpad.skins import (GLUE, NEON, TEMPLATE, PictureSkin, Skin, font_px, note_images, safe_rect, text_effect,
+                           writing_colors, writing_layer)
 
 MARGIN = 18          # room around the paper for its shadow (and the pin)
 BAR = 46             # room under the paper for the buttons
@@ -150,7 +151,7 @@ class Paper(QWidget):
     def _writing(self):
         return writing_colors(self.skin(), self.note["color"])
 
-    def paint_paper(self, p: QPainter, color: int | None = None) -> None:
+    def paint_paper(self, p: QPainter, color: int | None = None, shadow_only: bool = False) -> None:
         r = self.paper_rect()
         color = self.note["color"] if color is None else color
         dpr = self.devicePixelRatioF()
@@ -164,7 +165,8 @@ class Paper(QWidget):
             self._shadow = shadow_image(self._paper, MARGIN, dpr)
             self._shadow_key = size
         p.drawImage(QPointF(r.left() - MARGIN, r.top() - MARGIN), self._shadow)
-        p.drawImage(r.topLeft(), self._paper)
+        if not shadow_only:
+            p.drawImage(r.topLeft(), self._paper)
 
     def paint_bar(self, p: QPainter) -> None:
         """While the mouse is over the window the strip under the paper takes the
@@ -233,8 +235,23 @@ class NoteWindow(Paper):
         self.confirm_timer.setSingleShot(True)
         self.confirm_timer.setInterval(2200)
         self.confirm_timer.timeout.connect(lambda: self.away_button.setText("✕"))
+        self.click_timer = QTimer(self)             # one click: write at the end; two: carry it
+        self.click_timer.setSingleShot(True)
+        self.click_timer.setInterval(QApplication.doubleClickInterval())
+        self.click_timer.timeout.connect(self.editor.focus_end)
+        # wind: the note sways, glued along its top, and holds still under the mouse
+        self.wind = 0.0                             # 0 still .. 1 blowing
+        self.wind_seed = sum(map(ord, note["id"])) % 97 / 9.7      # each note sways out of step
+        self.wind_clock = QElapsedTimer()
+        self.wind_clock.start()
+        self.wind_timer = QTimer(self)
+        self.wind_timer.setInterval(33)
+        self.wind_timer.timeout.connect(self._blow)
+        self._writing_key = self._masks_key = None
+        self._writing_img = self._masks = None
         self.place_at(QRectF(*note["rect"]))
         self.bind()
+        self.update_wind()
 
     # geometry
     def paper_rect(self) -> QRectF:
@@ -258,13 +275,79 @@ class NoteWindow(Paper):
         self.size_button.style().polish(self.size_button)
         super().refresh_look()
 
+    # wind
+    def update_wind(self) -> None:
+        """Start or stop blowing, after Settings change."""
+        if self.app.wind_speed() > 0:
+            self.wind_timer.start()
+        else:
+            self.wind_timer.stop()
+            self._settle(0.0)
+
+    def _still(self) -> bool:
+        focused = any(edit.hasFocus() for _, _, edit in self.editor.rows)
+        return self.hover or focused or self.sizing or self.carrying is not None or not self.isVisible()
+
+    def _blow(self) -> None:
+        target = 0.0 if self._still() else 1.0
+        step = 0.033 / (0.25 if target < self.wind else 0.8)     # calms quickly, picks up slowly
+        self._settle(min(target, self.wind + step) if target > self.wind else max(target, self.wind - step))
+        if self.wind > 0:
+            self.update(self.rect())
+
+    def _settle(self, amount: float) -> None:
+        was = self.wind
+        self.wind = amount
+        if (was > 0) != (amount > 0):
+            self.editor.setVisible(amount == 0)       # the live editor shows when the note holds still
+            self.update()
+
+    def _front(self) -> QImage:
+        """The note as one picture (paper and writing), for the wind to bend."""
+        r = self.paper_rect()
+        dpr = self.devicePixelRatioF()
+        w, h = round(r.width()), round(r.height())
+        key = (w, h, dpr, self.skin().key, repr(self.note["rows"]), self.note["color"], text_effect(self.skin()),
+               self.editor.ink.name(), font_px(w))
+        if key != self._writing_key:
+            self._writing_img = writing_layer(self.note, self.skin(), w, h, dpr)
+            self._writing_key = key
+        front = QImage(self._writing_img.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        front.fill(Qt.GlobalColor.transparent)
+        p = QPainter(front)
+        p.drawImage(QRectF(0, 0, front.width(), front.height()), self._paper)
+        p.drawImage(0, 0, self._writing_img)
+        p.end()
+        return front
+
+    def _paint_blowing(self, p: QPainter) -> None:
+        from peelpad.stage import Masks, Painted, paint_bands
+
+        r = self.paper_rect()
+        dpr = self.devicePixelRatioF()
+        front = self._front()
+        if (front.size(), self.skin().key) != self._masks_key:
+            self._masks = Masks(front, dpr)
+            self._masks_key = (front.size(), self.skin().key)
+        t = self.wind_clock.elapsed() / 1000
+        speed = self.app.wind_speed() * self.wind
+        grow = max(0.0, (MARGIN - 4) * 2 / max(r.width(), r.height()))
+        shape = physics.wind(r.width(), r.height(), r.height() * GLUE / TEMPLATE, t, speed, self.wind_seed, grow)
+        painted = Painted(shape, dpr)
+        paint_bands(p, painted, front, front, QPointF(-r.left(), -r.top()), self._masks)
+        p.resetTransform()
+
     # painting
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        self.paint_paper(p)
         r = self.paper_rect()
+        if self.wind > 0:
+            self.paint_paper(p, shadow_only=True)
+            self._paint_blowing(p)
+        else:
+            self.paint_paper(p)
         if not isinstance(self.skin(), PictureSkin) and not self.skin().animated:   # those have their own decoration
             pin = QColor(NEON[(self.note["color"] + 2) % 4][1]).darker(118)
             draw_pin(p, QPointF(r.center().x(), r.top() + r.height() * 0.07), max(6.0, r.width() * 0.032), pin)
@@ -356,12 +439,16 @@ class NoteWindow(Paper):
             self.pick_up(QPointF(self.geometry().topLeft()) + start)
 
     def mouseReleaseEvent(self, event):
+        if self.press is not None and not self.sizing:
+            self.click_timer.start()
         self.drag = None
         self.press = None
 
     def mouseDoubleClickEvent(self, event):
+        """Double-click the paper: the note follows the mouse, no button held; click to put it down."""
+        self.click_timer.stop()
         if not self.sizing and self.on_paper(event.position()):
-            self.editor.focus_end()
+            self.pick_up(QPointF(self.geometry().topLeft()) + event.position(), sticky=True)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
@@ -381,15 +468,16 @@ class NoteWindow(Paper):
         self.place_at(QRectF(c.x() - w / 2, c.y() - h / 2, w, h))
 
     # picked up and carried, with the same paper physics as a sheet from the pad
-    def pick_up(self, grab: QPointF) -> None:
+    def pick_up(self, grab: QPointF, sticky: bool = False) -> None:
         from peelpad.stage import PeelActor
 
+        self._settle(0.0)
         r = self.global_paper()
         dpr = max(1.0, self.devicePixelRatioF())
         front, back = note_images(self.note, self.skin(), round(r.width()), round(r.height()), dpr)
         self.carrying = PeelActor(r, grab, front, back, dpr, 0, on_landed=self._landed, on_returned=self._landed_back,
-                                  carry=True, follow=True)
-        self.app.stages.at(grab, follow=True).add(self.carrying)
+                                  carry=True, follow=True, sticky=sticky)
+        self.app.stages.at(grab, follow=True, catch=sticky).add(self.carrying)
         QTimer.singleShot(16, self.hide)            # the stage shows the sheet first, so nothing blinks
 
     def _landed(self, rect: QRectF) -> None:
