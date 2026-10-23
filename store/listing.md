@@ -6,10 +6,20 @@ Price: **Free**. Screenshots: `store/screenshots/` (1920 × 1080, the same for e
 Shared fields (all languages):
 
 - **Product name:** Peelpad
-- **Copyright:** © 2026 Niro54321
+- **Copyright:** © 2026 fogamas (Niro54321)
 - **Privacy policy URL:** https://github.com/Niro54321/Peelpad/blob/main/PRIVACY.md
 - **Website:** https://github.com/Niro54321/Peelpad
 - **Support contact:** https://github.com/Niro54321/Peelpad/issues
+
+**Submission options > Restricted capabilities (why runFullTrust):**
+
+> Peelpad is a desktop (Win32) app written with Qt, packaged as MSIX. It needs runFullTrust to run its desktop executable, show always-on-top note windows and a tray icon. It does not access other apps' data.
+
+**Notes for certification:**
+
+> Peelpad is a sticky-notes app. Write a task on the pad, then drag the paper to peel the sheet off and drop it anywhere; it stays on top. Settings: the gear button under the pad (or right-click the tray icon). No account or test login is needed. The app only connects to the internet (open-meteo.com) if the user picks the Weather look and types a city.
+
+**Age rating (IARC questionnaire):** category *Productivity / Utility*; answer **No** to every question (no violence, no user-to-user communication, no sharing of location, no purchases). Expected rating: 3+ / Everyone.
 
 ---
 
