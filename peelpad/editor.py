@@ -7,12 +7,39 @@ The editor writes straight into the note's dict.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPalette
+from PySide6.QtCore import QPoint, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QPalette
 from PySide6.QtWidgets import QAbstractButton, QFrame, QHBoxLayout, QLineEdit, QScrollArea, QVBoxLayout, QWidget
 
 from peelpad import store
-from peelpad.skins import _draw_check, check_box, hand_font, row_height
+from peelpad.skins import _draw_check, bloom, check_box, hand_font, row_height
+
+
+class Sheet(QWidget):
+    """Holds the rows. With neon ink it paints one halo behind all of them."""
+
+    def __init__(self, editor: "TaskEditor"):
+        super().__init__()
+        self.editor = editor
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+    def paintEvent(self, event):
+        ed = self.editor
+        if ed.glow is None or not ed.rows:
+            return
+        dpr = self.devicePixelRatioF()
+        layer = QImage(max(1, round(self.width() * dpr)), max(1, round(self.height() * dpr)),
+                       QImage.Format.Format_ARGB32_Premultiplied)
+        layer.setDevicePixelRatio(dpr)
+        layer.fill(Qt.GlobalColor.transparent)
+        q = QPainter(layer)
+        for _, check, edit in ed.rows:
+            for w in (check, edit):
+                w.render(q, w.mapTo(self, QPoint(0, 0)), renderFlags=QWidget.RenderFlag(0))
+        q.end()
+        p = QPainter(self)
+        p.drawImage(QPoint(0, 0), bloom(layer, ed.glow, ed.px * dpr))
+        p.end()
 
 
 class Check(QAbstractButton):
@@ -27,10 +54,10 @@ class Check(QAbstractButton):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        px = self.editor.px
-        box = check_box(px, self.height())
+        box = check_box(self.editor.px, self.height())
         box.moveLeft(1)
+
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
         _draw_check(p, box, self.editor.ink, self.row["kind"], self.isChecked())
         p.end()
 
@@ -56,6 +83,7 @@ class RowEdit(QLineEdit):
         self.row, self.editor = row, editor
         self.setFrame(False)
         self.setMaxLength(400)
+        self.textChanged.connect(lambda _: editor.inner.update())
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -89,6 +117,7 @@ class TaskEditor(QScrollArea):
         super().__init__(parent)
         self.note: dict | None = None
         self.ink = QColor("#1F1D1A")
+        self.glow: QColor | None = None
         self.px = 17
         self.rows: list[tuple[QWidget, Check, RowEdit]] = []
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -97,8 +126,7 @@ class TaskEditor(QScrollArea):
         self.setWidgetResizable(True)
         self.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }")
         self.viewport().setAutoFillBackground(False)
-        self.inner = QWidget()
-        self.inner.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.inner = Sheet(self)
         self.column = QVBoxLayout(self.inner)
         self.column.setContentsMargins(0, 0, 0, 0)
         self.column.setSpacing(0)
@@ -122,8 +150,8 @@ class TaskEditor(QScrollArea):
             return False
         return super().viewportEvent(event)
 
-    def bind(self, note: dict, ink: QColor, px: int) -> None:
-        self.note, self.ink, self.px = note, QColor(ink), px
+    def bind(self, note: dict, ink: QColor, px: int, glow: QColor | None = None) -> None:
+        self.note, self.ink, self.px, self.glow = note, QColor(ink), px, glow
         for w, _, _ in self.rows:
             w.deleteLater()
         self.rows = []
@@ -133,8 +161,8 @@ class TaskEditor(QScrollArea):
             self._make(row, len(self.rows))
         self.restyle()
 
-    def set_look(self, ink: QColor, px: int) -> None:
-        self.ink, self.px = QColor(ink), px
+    def set_look(self, ink: QColor, px: int, glow: QColor | None = None) -> None:
+        self.ink, self.px, self.glow = QColor(ink), px, glow
         self.restyle()
 
     def _make(self, row: dict, index: int) -> RowEdit:
@@ -147,6 +175,7 @@ class TaskEditor(QScrollArea):
         line.addWidget(check)
         line.addWidget(edit, 1)
         check.toggled.connect(lambda on, r=row: self._toggle(r, on))
+        check.toggled.connect(lambda _: self.inner.update())
         edit.textEdited.connect(lambda text, r=row: self._edit(r, text))
         edit.focusInEvent = self._focus_in(edit)
         self.column.insertWidget(index, holder)
@@ -187,6 +216,8 @@ class TaskEditor(QScrollArea):
             edit.setStyleSheet("QLineEdit { background: transparent; border: none; padding: 0; }")
             edit.setPlaceholderText("Write a task…" if i == 0 and len(self.rows) == 1 else "")
             check.update()
+        self.column.setContentsMargins(*(round(self.px * 0.7),) * 4)
+        self.inner.update()
 
     def _toggle(self, row: dict, on: bool) -> None:
         row["done"] = on

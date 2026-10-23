@@ -11,11 +11,12 @@ from PySide6.QtWidgets import QPushButton, QWidget
 
 from peelpad import store
 from peelpad.editor import TaskEditor
-from peelpad.skins import NEON, Skin, font_px, safe_rect
+from peelpad.skins import NEON, Skin, font_px, safe_rect, writing_colors
 
 MARGIN = 18          # room around the paper for its shadow (and the pin)
 GRIP = 22            # the corner that resizes
-MIN_SIZE = 150
+MIN_SIZE = 90
+MAX_SIZE = 1400
 
 
 def shadow_image(paper: QImage, margin: int, dpr: float) -> QImage:
@@ -89,16 +90,20 @@ class Paper(QWidget):
         self._cache_key = None
         r = self.paper_rect()
         area = safe_rect(r.width(), r.height()).translated(r.topLeft())
-        self.editor.setGeometry(area.toAlignedRect())
-        self.editor.set_look(self.skin().ink(self.note["color"]) if self.app.ink is None else self.app.ink,
-                             font_px(r.width()))
+        m = round(font_px(r.width()) * 0.7)       # the editor's own margin, room for a neon halo
+        self.editor.setGeometry(area.adjusted(-m, -m, m, m).toAlignedRect())
+        ink, glow = self._writing()
+        self.editor.set_look(ink, font_px(r.width()), glow)
         self.update()
 
     def bind(self) -> None:
         r = self.paper_rect()
-        self.editor.bind(self.note, self.skin().ink(self.note["color"]) if self.app.ink is None else self.app.ink,
-                         font_px(r.width()))
+        ink, glow = self._writing()
+        self.editor.bind(self.note, ink, font_px(r.width()), glow)
         self.refresh_look()
+
+    def _writing(self):
+        return writing_colors(self.skin(), self.note["color"])
 
     def paint_paper(self, p: QPainter, color: int | None = None) -> None:
         r = self.paper_rect()
@@ -170,14 +175,16 @@ class NoteWindow(Paper):
         r = self.paper_rect()
         size = max(18, round(r.height() * 0.1))
         ink = self.editor.ink
+        dark = ink.lightnessF() < 0.5
+        fill, hover = ("255,255,255,70", "255,255,255,170") if dark else ("0,0,0,80", "0,0,0,150")
         for i, b in enumerate(reversed(self.buttons)):
             b.setGeometry(round(r.right() - 8 - (i + 1) * (size + 4)), round(r.top() + 6), size, size)
             b.setStyleSheet(
-                f"QPushButton {{ color: rgba({ink.red()},{ink.green()},{ink.blue()},210); background: rgba(255,255,255,70);"
+                f"QPushButton {{ color: rgba({ink.red()},{ink.green()},{ink.blue()},220); background: rgba({fill});"
                 f" border: 1px solid rgba(0,0,0,40); border-radius: {size // 2}px; font-size: {round(size * 0.5)}px;"
                 f" font-weight: 700; padding: 0; }}"
-                f"QPushButton:hover {{ background: rgba(255,255,255,170); }}")
-        self.buttons[1].setVisible(self.underMouse() and not self.skin().aspect and self.skin().cycle)
+                f"QPushButton:hover {{ background: rgba({hover}); }}")
+        self.buttons[1].setVisible(self.underMouse() and self.skin().cycle)
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -215,11 +222,10 @@ class NoteWindow(Paper):
         if self.resizing:
             start, size = self.resizing
             d = QCursor.pos() - start
-            w = max(MIN_SIZE, size[0] + d.x())
-            h = max(MIN_SIZE, size[1] + d.y())
-            aspect = self.skin().aspect
-            if aspect:
-                h = w / aspect
+            w = min(MAX_SIZE, max(MIN_SIZE, size[0] + d.x()))
+            h = min(MAX_SIZE, max(MIN_SIZE, size[1] + d.y()))
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                h = w * size[1] / size[0]         # Shift keeps the shape
             self.resize(round(w + 2 * MARGIN), round(h + 2 * MARGIN))
             return
         self.setCursor(Qt.CursorShape.SizeFDiagCursor if self._in_grip(pos) else Qt.CursorShape.ArrowCursor)
@@ -241,6 +247,18 @@ class NoteWindow(Paper):
     def mouseDoubleClickEvent(self, event):
         if self.on_paper(event.position()):
             self.editor.focus_end()
+
+    def wheelEvent(self, event):
+        """Ctrl + wheel makes the note bigger or smaller, around its middle."""
+        if not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            return super().wheelEvent(event)
+        r = self.global_paper()
+        k = 1.08 if event.angleDelta().y() > 0 else 1 / 1.08
+        w = min(MAX_SIZE, max(MIN_SIZE, r.width() * k))
+        h = min(MAX_SIZE, max(MIN_SIZE, w * r.height() / r.width()))
+        c = r.center()
+        self.setGeometry(round(c.x() - w / 2 - MARGIN), round(c.y() - h / 2 - MARGIN),
+                         round(w + 2 * MARGIN), round(h + 2 * MARGIN))
 
     def resizeEvent(self, event):
         self.refresh_look()

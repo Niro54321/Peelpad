@@ -231,3 +231,57 @@ def test_editor_writes_into_the_note():
     assert note["rows"][1]["done"] and note["rows"][1]["created"] == store.today()
     ed.remove(ed.rows[1][2])
     assert len(note["rows"]) == 1
+
+
+def test_themes_and_your_colours(tmp_path):
+    keys = [s.key for s in skins.all_skins(tmp_path, {"paper": "#000000", "ink": "#00AAFF", "glow": True})]
+    assert {"theme:midnight", "theme:white", "mine"} <= set(keys)
+    midnight = skins.skin_for("theme:midnight", tmp_path)
+    core, glow = skins.writing_colors(midnight, 0)
+    assert glow == QColor("#3DB2FF") and core.lightness() > glow.lightness()
+    white = skins.skin_for("theme:white", tmp_path)
+    assert skins.writing_colors(white, 0) == (skins.DARK_INK, None)
+    mine = skins.skin_for("mine", tmp_path, {"paper": "#102030", "ink": "#FF0000", "glow": False})
+    assert mine.color(2) == QColor("#102030") and skins.writing_colors(mine, 0)[0] == QColor("#FF0000")
+
+
+def test_glowing_ink_shines_around_the_letters(tmp_path):
+    note = note_with("Neon")
+    midnight = skins.skin_for("theme:midnight", tmp_path)
+    front, _ = skins.note_images(note, midnight, 300, 300, 1.0)
+    skins.WRITING.glow = False
+    try:
+        plain, _ = skins.note_images(note, midnight, 300, 300, 1.0)
+    finally:
+        skins.WRITING.glow = None
+
+    def blue(img):
+        return sum(img.pixelColor(x, y).blue() for x in range(30, 200, 2) for y in range(45, 80, 2))
+    assert blue(front) > blue(plain) * 1.15
+
+
+def test_writing_settings_change_the_text():
+    try:
+        skins.WRITING.scale = 1.5
+        assert skins.font_px(300) == round(300 * 0.058 * 1.5)
+        skins.WRITING.family = "Segoe UI"
+        assert skins.hand_font(17).family() == "Segoe UI"
+        skins.WRITING.ink = QColor("#123456")
+        assert skins.writing_colors(skins.Skin(), 0)[0] == QColor("#123456")
+    finally:
+        skins.WRITING.scale, skins.WRITING.family, skins.WRITING.ink = 1.0, "", None
+
+
+def test_history_lists_each_day(tmp_path):
+    s = store.Store(tmp_path / "notes.json")
+    n = note_with("a", "b", "c", done=(0,))
+    for r in n["rows"]:
+        r["created"] = "2026-10-20"
+    n["rows"][0]["done_at"] = "2026-10-21"
+    n["status"] = "pinned"
+    s.data["notes"].append(n)
+    log = s.history()
+    assert log["2026-10-20"]["written"] == ["a", "b", "c"]
+    assert log["2026-10-21"]["done"] == ["a"]
+    s.close(n, finished=True)                    # finished by hand: the rest count as done today
+    assert sorted(s.history()[store.today()]["done"]) == ["b", "c"]

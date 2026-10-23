@@ -1,6 +1,6 @@
-"""The stage: a see-through, click-through window over a whole screen where
-paper moves while it is off the pad or between states (peeling, carried,
-dropped, crumpled). Each moving thing is an actor with step() and paint().
+"""The stage: a small see-through, click-through window where paper moves
+while it is off the pad or between states (peeling, carried, dropped,
+crumpled). Each moving thing is an actor with step() and paint().
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import QElapsedTimer, QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import (QBrush, QColor, QGuiApplication, QImage, QLinearGradient, QPainter, QPolygonF,
+from PySide6.QtGui import (QBrush, QColor, QImage, QLinearGradient, QPainter, QPolygonF,
                            QRadialGradient, QTransform)
 from PySide6.QtWidgets import QWidget
 
@@ -113,15 +113,19 @@ def _curl_shadow(p: QPainter, band, fold, t: QTransform, base: QTransform, k: fl
 
 
 class Stage(QWidget):
-    def __init__(self, screen):
+    """A see-through, click-through window only as big as the paper moving in it.
+    It grows or moves when the paper gets near its edge, and goes away the moment
+    the paper stops, so nothing ever sits over the rest of the screen."""
+
+    ROOM = 140          # spare room around the paper, so the window rarely has to move
+
+    def __init__(self, stages: "Stages"):
         super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
                          | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowTransparentForInput
                          | Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.screen_ = screen
-        # one pixel short of the screen, so Windows doesn't treat it as a full-screen app
-        self.setGeometry(screen.geometry().adjusted(0, 0, 0, -1))
+        self.stages = stages
         self.actors: list = []
         self.timer = QTimer(self)
         self.timer.setTimerType(Qt.TimerType.PreciseTimer)
@@ -134,11 +138,10 @@ class Stage(QWidget):
         actor.stage = self
         self.actors.append(actor)
         actor.step(0.0)
+        self._refresh()
         if not self.isVisible():
-            self.setGeometry(self.screen_.geometry().adjusted(0, 0, 0, -1))
             self.show()
         self.raise_()
-        self._refresh()
         if not self.timer.isActive():
             self.clock.start()
             self.timer.start()
@@ -146,23 +149,33 @@ class Stage(QWidget):
     def tick(self) -> None:
         dt = min(0.05, self.clock.restart() / 1000)
         self.actors = [a for a in self.actors if a.step(dt)]
-        self._refresh()
-        if not self.actors:
-            self.timer.stop()
-            QTimer.singleShot(60, self._maybe_hide)
+        if self.actors:
+            self._refresh()
+            return
+        self.timer.stop()
+        self.hide()
+        self.stages.done(self)
 
-    def _maybe_hide(self) -> None:
-        if not self.actors:
-            self.hide()
-
-    def _refresh(self) -> None:
+    def _needed(self) -> QRectF:
         now = QRectF()
         for a in self.actors:
             now = now.united(a.bounds())
-        area = self.dirty.united(now).adjusted(-40, -40, 60, 70)
-        self.dirty = now
-        if not area.isEmpty():
-            self.update(area.translated(-QPointF(self.geometry().topLeft())).toAlignedRect())
+        return now.adjusted(-36, -30, 48, 56)          # the shadows reach down and right
+
+    def _refresh(self) -> None:
+        needed = self._needed()
+        if needed.isEmpty():
+            return
+        here = QRectF(self.geometry())
+        if not here.contains(needed):
+            room = needed.adjusted(-self.ROOM, -self.ROOM, self.ROOM, self.ROOM).toAlignedRect()
+            self.setGeometry(room)
+            self.dirty = needed
+            self.update()
+            return
+        area = self.dirty.united(needed)
+        self.dirty = needed
+        self.update(area.translated(-here.topLeft()).toAlignedRect())
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -178,18 +191,19 @@ class Stage(QWidget):
 
 
 class Stages:
-    """One stage per screen, made when first needed."""
+    """A small stage for each moving piece of paper, gone when it stops."""
 
     def __init__(self):
-        self.by_name: dict[str, Stage] = {}
+        self.live: set[Stage] = set()
 
-    def at(self, global_pt: QPointF) -> Stage:
-        screen = QGuiApplication.screenAt(global_pt.toPoint()) or QGuiApplication.primaryScreen()
-        stage = self.by_name.get(screen.name())
-        if stage is None or stage.screen_ is not screen:
-            stage = Stage(screen)
-            self.by_name[screen.name()] = stage
+    def at(self, global_pt: QPointF | None = None) -> Stage:
+        stage = Stage(self)
+        self.live.add(stage)
         return stage
+
+    def done(self, stage: Stage) -> None:
+        self.live.discard(stage)
+        stage.deleteLater()
 
 
 def _ease_out(x: float) -> float:

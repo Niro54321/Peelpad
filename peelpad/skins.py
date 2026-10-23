@@ -1,10 +1,12 @@
-"""What a note looks like: the neon paper colours, or a picture you made.
+"""What a note looks like: neon paper, a theme (black with glowing blue ink,
+plain white...), colours you pick, or a picture you made. Also the writing:
+its font, size, ink colour and an optional neon glow.
 
-A custom skin is a PNG, ideally 600 x 600 px. It is stretched to the note, so
-notes with a skin keep its shape when you resize them. Transparent pixels are
-see-through on the desktop (and clicks go through them). Text is written inside
-the safe area: 60 px in from the left, right and bottom, 96 px from the top
-(the top band is where the glue is, and where you grab a pinned note).
+A custom skin is a PNG, ideally 600 x 600 px. It is stretched to the note.
+Transparent pixels are see-through on the desktop (and clicks go through them).
+Text is written inside the safe area: 60 px in from the left, right and bottom,
+96 px from the top (the top band is where the glue is, and where you grab a
+pinned note).
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import hashlib
 import random
 import shutil
 import unicodedata
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -32,12 +35,24 @@ SAFE = (SIDE / TEMPLATE, GLUE / TEMPLATE, 1 - SIDE / TEMPLATE, 1 - SIDE / TEMPLA
 DARK_INK, LIGHT_INK = QColor("#1F1D1A"), QColor("#FBFAF4")
 
 
+@dataclass
+class Writing:
+    """Choices about the writing that hold for every note (set from Settings)."""
+    family: str = ""                 # empty: the handwriting default
+    scale: float = 1.0
+    ink: QColor | None = None        # None: the skin's own ink
+    glow: bool | None = None         # None: the skin's own choice
+
+
+WRITING = Writing()
+
+
 def safe_rect(w: float, h: float) -> QRectF:
     return QRectF(w * SAFE[0], h * SAFE[1], w * (SAFE[2] - SAFE[0]), h * (SAFE[3] - SAFE[1]))
 
 
 def font_px(w: float) -> int:
-    return max(11, round(w * 0.058))
+    return max(8, round(w * 0.058 * WRITING.scale))
 
 
 def row_height(px: int) -> int:
@@ -55,7 +70,7 @@ def hand_family() -> str:
 
 
 def hand_font(px: int, done: bool = False) -> QFont:
-    f = QFont(hand_family())
+    f = QFont(WRITING.family or hand_family())
     f.setPixelSize(px)
     f.setStrikeOut(done)
     return f
@@ -79,11 +94,12 @@ def _grain() -> QImage:
 
 
 class Skin:
-    """One look. `color` is the note's neon colour (0..3), which a picture ignores."""
+    """One look. `color` is the note's neon colour (0..3), which other looks ignore."""
 
     key = "neon"
-    name = "Neon"
-    aspect: float | None = None          # width / height a note keeps, if any
+    name = "Neon (a new colour each sheet)"
+    aspect: float | None = None          # width / height of a picture skin
+    glow = False                         # the ink shines
 
     def __init__(self, cycle: bool = True, solid: int = 0):
         self.cycle, self.solid = cycle, solid
@@ -100,30 +116,61 @@ class Skin:
         base = self.color(color)
         r = QRectF(0, 0, w, h)
         p.fillRect(r, base)
+        dark = base.lightnessF() < 0.35
         light = QLinearGradient(0, 0, w * 0.4, h)
-        light.setColorAt(0, QColor(255, 255, 255, 46))
+        light.setColorAt(0, QColor(255, 255, 255, 22 if dark else 46))
         light.setColorAt(0.55, QColor(255, 255, 255, 0))
-        light.setColorAt(1, QColor(0, 0, 0, 16))
+        light.setColorAt(1, QColor(0, 0, 0, 30 if dark else 16))
         p.fillRect(r, light)
         glue = QLinearGradient(0, 0, 0, h * SAFE[1])
-        glue.setColorAt(0, QColor(0, 0, 0, 10))
-        glue.setColorAt(0.85, QColor(0, 0, 0, 14))
-        glue.setColorAt(1, QColor(0, 0, 0, 0))
+        tone = QColor(255, 255, 255) if dark else QColor(0, 0, 0)
+        for at, alpha in ((0, 10), (0.85, 14), (1, 0)):
+            tone.setAlpha(alpha)
+            glue.setColorAt(at, tone)
         p.fillRect(QRectF(0, 0, w, h * SAFE[1]), glue)
         p.fillRect(r, _grain())
 
     def paint_back(self, p: QPainter, w: float, h: float, color: int) -> None:
         base = self.color(color)
         p.fillRect(QRectF(0, 0, w, h), base)
-        p.fillRect(QRectF(0, 0, w, h), QColor(255, 255, 255, 92))
+        p.fillRect(QRectF(0, 0, w, h), QColor(255, 255, 255, 40 if base.lightnessF() < 0.35 else 92))
         p.fillRect(QRectF(0, 0, w, h), _grain())
+
+
+class ColorSkin(Skin):
+    """One paper colour and one ink: a theme, or the colours you picked."""
+
+    def __init__(self, key: str, name: str, paper: str, ink: str, glow: bool = False):
+        self.cycle, self.solid = False, 0
+        self.key, self.name = key, name
+        self.paper, self._ink, self.glow = QColor(paper), QColor(ink), glow
+
+    def color(self, color: int) -> QColor:
+        return QColor(self.paper)
+
+    def ink(self, color: int) -> QColor:
+        return QColor(self._ink)
+
+
+THEMES = [
+    ("theme:midnight", "Midnight: black paper, glowing blue ink", "#111318", "#3DB2FF", True),
+    ("theme:neon-night", "Neon night: black paper, glowing pink ink", "#14101A", "#FF4FD8", True),
+    ("theme:toxic", "Toxic: black paper, glowing green ink", "#0F1410", "#5CFF6B", True),
+    ("theme:white", "Paper white", "#FAFAF6", "#1F1D1A", False),
+    ("theme:kraft", "Kraft", "#C9A47C", "#2A1E14", False),
+]
+
+
+def mine_skin(mine: dict) -> ColorSkin:
+    return ColorSkin("mine", "Your colours", mine.get("paper", "#1B1E2B"), mine.get("ink", "#7DF9FF"),
+                     bool(mine.get("glow", True)))
 
 
 class PictureSkin(Skin):
     """A PNG you made."""
 
     def __init__(self, path: Path):
-        super().__init__()
+        super().__init__(cycle=False)
         self.path = Path(path)
         self.key = f"custom:{self.path.name}"
         self.name = self.path.stem
@@ -162,8 +209,22 @@ def ink_for(image: QImage) -> QColor:
     return DARK_INK if luma > 0.5 else LIGHT_INK
 
 
-def all_skins(folder: Path) -> list[Skin]:
+def writing_colors(skin: Skin, color: int) -> tuple[QColor, QColor | None]:
+    """The ink to write with, and the colour of its glow (None: no glow).
+    A glowing ink is written with a bright core and shines in its own colour."""
+    ink = QColor(WRITING.ink) if WRITING.ink is not None else skin.ink(color)
+    glow = skin.glow if WRITING.glow is None else WRITING.glow
+    if not glow:
+        return ink, None
+    core = QColor(round(ink.red() * 0.55 + 255 * 0.45), round(ink.green() * 0.55 + 255 * 0.45),
+                  round(ink.blue() * 0.55 + 255 * 0.45))
+    return core, ink
+
+
+def all_skins(folder: Path, mine: dict | None = None) -> list[Skin]:
     skins: list[Skin] = [Skin()] + [Skin(cycle=False, solid=i) for i in range(NEON_COUNT)]
+    skins += [ColorSkin(*t) for t in THEMES]
+    skins.append(mine_skin(mine or {}))
     for f in sorted(folder.glob("*.png")):
         try:
             skins.append(PictureSkin(f))
@@ -172,12 +233,16 @@ def all_skins(folder: Path) -> list[Skin]:
     return skins
 
 
-def skin_for(key: str, folder: Path) -> Skin:
+def skin_for(key: str, folder: Path, mine: dict | None = None) -> Skin:
     if key.startswith("solid:"):
         try:
             return Skin(cycle=False, solid=int(key[6:]) % NEON_COUNT)
         except ValueError:
             return Skin()
+    if key.startswith("theme:"):
+        return next((ColorSkin(*t) for t in THEMES if t[0] == key), Skin())
+    if key == "mine":
+        return mine_skin(mine or {})
     if key.startswith("custom:"):
         try:
             return PictureSkin(folder / key[7:])
@@ -200,7 +265,7 @@ def import_skin(source: Path, folder: Path) -> tuple[str, list[str]]:
                      f"{TEMPLATE} x {TEMPLATE} px is best.")
     ratio = image.width() / image.height()
     if not 0.5 <= ratio <= 2:
-        notes.append("It's very long or very tall; notes will keep that shape.")
+        notes.append("It's very long or very tall; new notes will take that shape.")
     folder.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha1(source.read_bytes()).hexdigest()[:8]
     stem = "".join(c if c.isalnum() or c in "-_ " else "_" for c in source.stem).strip() or "skin"
@@ -243,7 +308,7 @@ def save_template(path: Path) -> None:
                "- Keep 60 px free on the left, right and bottom, 96 px at the top\n"
                "- Tasks are written in this box, so keep it calm\n"
                "  (light colours get dark ink, dark ones light ink)\n"
-               "- Other sizes work too; notes keep your picture's shape\n\n"
+               "- Other sizes work too; new notes take your picture's shape\n\n"
                "Paint over everything here, then upload it in Settings > Look.")
     for x in (SIDE, TEMPLATE - SIDE):
         p.drawText(QRectF(x - 30, TEMPLATE - SIDE + 18, 60, 24), Qt.AlignmentFlag.AlignCenter, f"{x}")
@@ -291,9 +356,10 @@ def check_box(px: int, row_h: int) -> QRectF:
     return QRectF(0, (row_h - size) / 2, size, size)
 
 
-def paint_rows(p: QPainter, note: dict, skin: Skin, w: float, h: float, alpha: float = 1.0) -> None:
+def paint_rows(p: QPainter, note: dict, skin: Skin, w: float, h: float, alpha: float = 1.0,
+               ink: QColor | None = None) -> None:
     """The note's rows, laid out like the live editor does."""
-    ink = QColor(skin.ink(note.get("color", 0)))
+    ink = QColor(ink if ink is not None else writing_colors(skin, note.get("color", 0))[0])
     ink.setAlphaF(ink.alphaF() * alpha)
     area = safe_rect(w, h)
     px = font_px(w)
@@ -318,6 +384,46 @@ def paint_rows(p: QPainter, note: dict, skin: Skin, w: float, h: float, alpha: f
         y += rh
 
 
+def bloom(layer: QImage, color: QColor, size: float) -> QImage:
+    """The neon light around whatever is drawn on `layer`: a bright tight halo
+    and a wide soft one, in `color`. `size` is the text size in pixels."""
+    from PIL import Image, ImageChops, ImageFilter
+
+    rgba = layer.convertToFormat(QImage.Format.Format_RGBA8888)
+    a = Image.frombuffer("RGBA", (rgba.width(), rgba.height()), bytes(rgba.constBits()), "raw", "RGBA",
+                         rgba.bytesPerLine(), 1).getchannel("A")
+    tight = a.filter(ImageFilter.GaussianBlur(max(1.0, size * 0.12))).point(lambda v: min(255, int(v * 1.7)))
+    wide = a.filter(ImageFilter.GaussianBlur(max(2.0, size * 0.45))).point(lambda v: min(200, int(v * 1.25)))
+    halo = ImageChops.add(tight, wide)
+    solid = Image.new("RGB", a.size, (color.red(), color.green(), color.blue()))
+    out = Image.merge("RGBA", (*solid.split(), halo))
+    img = QImage(out.tobytes(), out.width, out.height, out.width * 4, QImage.Format.Format_RGBA8888).copy()
+    img.setDevicePixelRatio(layer.devicePixelRatio())
+    return img
+
+
+def paint_writing(p: QPainter, note: dict, skin: Skin, w: float, h: float, dpr: float) -> None:
+    """The rows on a front, with their neon glow if the ink shines."""
+    core, glow = writing_colors(skin, note.get("color", 0))
+    if glow is None:
+        paint_rows(p, note, skin, w, h, ink=core)
+        return
+    layer = QImage(max(1, round(w * dpr)), max(1, round(h * dpr)), QImage.Format.Format_ARGB32_Premultiplied)
+    layer.fill(Qt.GlobalColor.transparent)
+    q = QPainter(layer)
+    q.setRenderHint(QPainter.RenderHint.Antialiasing)
+    q.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+    q.scale(dpr, dpr)
+    paint_rows(q, note, skin, w, h, ink=core)
+    q.end()
+    halo = bloom(layer, glow, font_px(w) * dpr)
+    p.save()
+    p.resetTransform()
+    p.drawImage(0, 0, halo)
+    p.drawImage(0, 0, layer)
+    p.restore()
+
+
 def note_images(note: dict, skin: Skin, w: int, h: int, dpr: float = 1.0) -> tuple[QImage, QImage]:
     """The front (with its writing) and the back of a note, at dpr x its size."""
     out = []
@@ -331,7 +437,7 @@ def note_images(note: dict, skin: Skin, w: int, h: int, dpr: float = 1.0) -> tup
         p.scale(dpr, dpr)
         if side == "front":
             skin.paint_front(p, w, h, note.get("color", 0))
-            paint_rows(p, note, skin, w, h)
+            paint_writing(p, note, skin, w, h, dpr)
         else:
             skin.paint_back(p, w, h, note.get("color", 0))
             # the ink shows through the paper a little
@@ -349,6 +455,8 @@ def preview(skin: Skin, size: int, color: int = 0) -> QImage:
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
     skin.paint_front(p, img.width(), img.height(), color)
+    if skin.key != "neon":
+        sample = {"color": color, "rows": [{"text": "Aa", "kind": "task", "done": False}]}
+        paint_writing(p, sample, skin, img.width(), img.height(), 1.0)
     p.end()
     return img
-

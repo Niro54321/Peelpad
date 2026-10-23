@@ -44,9 +44,16 @@ def is_complete(note: dict) -> bool:
     return bool(todo) and all(r["done"] for r in todo)
 
 
-DEFAULTS = {"version": 1, "skin": "neon", "ink": "auto", "notes": [], "days": [],
+DEFAULTS = {"version": 1, "skin": "neon", "notes": [], "days": [],
             "pad": {"pos": None, "on_top": False, "color": 0, "draft": None},
-            "startup": False}
+            "startup": False,
+            # how notes look and read
+            "ink": "auto",              # auto (the skin's), dark, light, or a #colour
+            "glow": "auto",             # auto (the skin's), on, off: neon ink that shines
+            "font": "",                 # a font family; empty is the handwriting default
+            "text_scale": 1.0,
+            "note_size": 300,           # width of the pad's sheets, px
+            "mine": {"paper": "#1B1E2B", "ink": "#7DF9FF", "glow": True}}   # "Your colours" theme
 
 
 class Store:
@@ -58,6 +65,7 @@ class Store:
             if isinstance(loaded, dict):
                 self.data.update(loaded)
                 self.data["pad"] = DEFAULTS["pad"] | loaded.get("pad", {})
+                self.data["mine"] = DEFAULTS["mine"] | loaded.get("mine", {})
         except (OSError, ValueError):
             pass
         if not self.data["pad"].get("draft"):
@@ -98,11 +106,33 @@ class Store:
         return note
 
     def close(self, note: dict, finished: bool) -> None:
+        """Finished by hand counts every task on it as done."""
         note["status"] = "finished" if finished else "deleted"
         note["closed"] = today()
+        if finished:
+            for r in tasks(note):
+                if not r["done"]:
+                    r["done"], r["done_at"] = True, today()
 
     def stats(self, now: date | None = None) -> dict:
         return compute_stats(self.data, now or date.today())
+
+    def history(self) -> dict[str, dict[str, list[str]]]:
+        return day_log(self.data)
+
+
+def day_log(data: dict) -> dict[str, dict[str, list[str]]]:
+    """Per day: the tasks you checked off and the tasks you wrote."""
+    every = list(data["notes"]) + ([data["pad"]["draft"]] if data["pad"].get("draft") else [])
+    log: dict[str, dict[str, list[str]]] = {}
+    for n in every:
+        for r in tasks(n):
+            text = r["text"].strip()
+            if r.get("created"):
+                log.setdefault(r["created"], {"done": [], "written": []})["written"].append(text)
+            if r["done"] and r.get("done_at") and n["status"] != "deleted":
+                log.setdefault(r["done_at"], {"done": [], "written": []})["done"].append(text)
+    return log
 
 
 def _streaks(days: set[date], now: date) -> tuple[int, int]:

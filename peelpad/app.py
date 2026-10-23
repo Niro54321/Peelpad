@@ -10,7 +10,8 @@ from PySide6.QtGui import QAction, QColor, QGuiApplication
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from peelpad.note import MARGIN, NoteWindow
+from peelpad.note import NoteWindow
+from peelpad import skins
 from peelpad.skins import DARK_INK, LIGHT_INK, note_images, skin_for
 from peelpad.stage import CrumpleActor, Stages
 from peelpad.store import Store
@@ -29,10 +30,10 @@ class App(QObject):
         self.skins_dir = self.data_dir / "skins"
         self.skins_dir.mkdir(exist_ok=True)
         self.store = Store(self.data_dir / "notes.json")
-        self.skin = skin_for(self.store.data["skin"], self.skins_dir)
+        self.skin = skin_for(self.store.data["skin"], self.skins_dir, self.store.data["mine"])
         if self.skin.key != self.store.data["skin"]:
             self.store.data["skin"] = self.skin.key        # its picture is gone
-        self.ink = self._ink(self.store.data["ink"])
+        self._writing()
         self.stages = Stages()
         self.save_timer = QTimer(self)
         self.save_timer.setSingleShot(True)
@@ -57,9 +58,22 @@ class App(QObject):
         self.store.wrote()
         self.changed()
 
-    @staticmethod
-    def _ink(mode: str) -> QColor | None:
-        return {"dark": DARK_INK, "light": LIGHT_INK}.get(mode)
+    def _writing(self) -> None:
+        """Font, size, ink and glow from the settings, for every note."""
+        d = self.store.data
+        ink = d.get("ink", "auto")
+        skins.WRITING.ink = {"dark": DARK_INK, "light": LIGHT_INK}.get(ink) or (
+            QColor(ink) if ink.startswith("#") else None)
+        skins.WRITING.glow = {"on": True, "off": False}.get(d.get("glow", "auto"))
+        skins.WRITING.family = d.get("font", "")
+        skins.WRITING.scale = float(d.get("text_scale", 1.0))
+
+    def restyle_all(self) -> None:
+        self._writing()
+        self.pad.refresh_look()
+        for win in self.windows.values():
+            win.refresh_look()
+        self.changed()
 
     def _place_pad(self) -> None:
         pos = self.store.data["pad"].get("pos")
@@ -129,25 +143,31 @@ class App(QObject):
 
     # ---------------------------------------------------------------- look
     def set_skin(self, key: str) -> None:
-        self.skin = skin_for(key, self.skins_dir)
+        self.skin = skin_for(key, self.skins_dir, self.store.data["mine"])
         self.store.data["skin"] = self.skin.key
         self.pad.resize_for_skin()
         for win in self.windows.values():
-            if self.skin.aspect:
-                r = win.paper_rect()
-                win.resize(round(r.width() + 2 * MARGIN), round(r.width() / self.skin.aspect + 2 * MARGIN))
             win.refresh_look()
         self.changed()
         if self.settings:
             self.settings.fill_skins()
 
-    def set_ink(self, mode: str) -> None:
-        self.store.data["ink"] = mode
-        self.ink = self._ink(mode)
-        self.pad.refresh_look()
-        for win in self.windows.values():
-            win.refresh_look()
+    def set_mine(self, **changes) -> None:
+        """Your own paper and ink colours (and glow), worn at once."""
+        self.store.data["mine"].update(changes)
+        self.set_skin("mine")
+
+    def set_writing(self, key: str, value) -> None:
+        """ink, glow, font or text_scale."""
+        self.store.data[key] = value
+        self.restyle_all()
+
+    def set_note_size(self, width: int) -> None:
+        self.store.data["note_size"] = max(140, min(640, int(width)))
+        self.pad.resize_for_skin()
         self.changed()
+        if self.settings:
+            self.settings.size_slider.set(self.store.data["note_size"])
 
     def set_pad_on_top(self, on: bool) -> None:
         self.store.data["pad"]["on_top"] = bool(on)

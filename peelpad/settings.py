@@ -1,18 +1,23 @@
-"""Settings: your stats, the look of the notes (with your own skins), and a few switches."""
+"""Settings: your stats, a calendar of what you did each day, the look of the
+notes (themes, your own colours, your own skins), the writing, and a few switches."""
 
 from __future__ import annotations
 
+import calendar
+import html
 import subprocess
 from datetime import date, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
-                               QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QFileDialog, QFontComboBox, QGridLayout,
+                               QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QStackedWidget,
+                               QVBoxLayout, QWidget)
 
-from peelpad.skins import GLUE, NEON, SIDE, TEMPLATE, all_skins, import_skin, preview, save_template
-from peelpad.widgets import GlassWindow, Segmented, label
+from peelpad.skins import (GLUE, NEON, SIDE, TEMPLATE, all_skins, hand_family, import_skin, preview,
+                           save_template)
+from peelpad.widgets import GlassWindow, Segmented, SliderRow, label
 
 WEEKS = 18
 
@@ -61,6 +66,103 @@ class Heatmap(QWidget):
         p.end()
 
 
+class MonthView(QWidget):
+    """A month, a square a day, with how many tasks you checked off that day."""
+
+    picked = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.month = date.today().replace(day=1)
+        self.selected = date.today().isoformat()
+        self.log: dict = {}
+        self.setMinimumHeight(300)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_log(self, log: dict) -> None:
+        self.log = log
+        self.update()
+
+    def shift(self, months: int) -> None:
+        y, m = self.month.year, self.month.month + months
+        y += (m - 1) // 12
+        m = (m - 1) % 12 + 1
+        self.month = date(y, m, 1)
+        self.update()
+
+    def _cells(self):
+        head = 22
+        cw = self.width() / 7
+        ch = (self.height() - head) / 6
+        first = self.month - timedelta(days=self.month.weekday())
+        for i in range(42):
+            d = first + timedelta(days=i)
+            yield d, QRectF((i % 7) * cw, head + (i // 7) * ch, cw, ch)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        fg = self.palette().windowText().color()
+        f = QFont(self.font())
+        f.setPixelSize(11)
+        p.setFont(f)
+        faint = QColor(fg)
+        faint.setAlpha(150)
+        p.setPen(faint)
+        cw = self.width() / 7
+        for i, name in enumerate(calendar.day_abbr):
+            p.drawText(QRectF(i * cw, 0, cw, 20), Qt.AlignmentFlag.AlignCenter, name)
+        today = date.today()
+        lime, lemon, pink = QColor(NEON[3][1]), QColor(NEON[0][1]), QColor(NEON[2][1])
+        for d, r in self._cells():
+            box = r.adjusted(2, 2, -2, -2)
+            key = d.isoformat()
+            day = self.log.get(key, {})
+            done, written = len(day.get("done", [])), len(day.get("written", []))
+            inside = d.month == self.month.month
+            back = QColor(fg)
+            back.setAlpha(26 if inside else 10)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(back)
+            p.drawRoundedRect(box, 8, 8)
+            if key == self.selected:
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.setPen(pink)
+                p.drawRoundedRect(box.adjusted(0.5, 0.5, -0.5, -0.5), 8, 8)
+            num = QColor(fg)
+            num.setAlpha(255 if inside else 90)
+            f.setPixelSize(12)
+            f.setBold(d == today)
+            p.setFont(f)
+            p.setPen(num)
+            p.drawText(box.adjusted(7, 4, -4, -4), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, str(d.day))
+            if done:
+                pill = QRectF(box.center().x() - 17, box.bottom() - 22, 34, 17)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(lime)
+                p.drawRoundedRect(pill, 8.5, 8.5)
+                f.setBold(True)
+                f.setPixelSize(11)
+                p.setFont(f)
+                p.setPen(QColor("#1F1D1A"))
+                p.drawText(pill, Qt.AlignmentFlag.AlignCenter, f"✓{done}")
+            elif written:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(lemon)
+                p.drawEllipse(box.center() + QRectF(0, 0, 0, box.height() * 0.28).bottomLeft(), 4, 4)
+        p.end()
+
+    def mousePressEvent(self, event):
+        for d, r in self._cells():
+            if r.contains(event.position()):
+                self.selected = d.isoformat()
+                if d.month != self.month.month:
+                    self.month = d.replace(day=1)
+                self.update()
+                self.picked.emit(self.selected)
+                return
+
+
 def card(number: str, caption: str) -> tuple[QWidget, QLabel]:
     w = QWidget()
     w.setProperty("card", True)
@@ -73,20 +175,51 @@ def card(number: str, caption: str) -> tuple[QWidget, QLabel]:
     return w, big
 
 
+def scrolled(inner: QWidget) -> QWidget:
+    page = QWidget()
+    outer = QVBoxLayout(page)
+    outer.setContentsMargins(0, 0, 0, 0)
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setWidget(inner)
+    outer.addWidget(scroll)
+    return page
+
+
+def swatch_icon(color: QColor, size: int = 16) -> QIcon:
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setBrush(color)
+    p.setPen(QColor(0, 0, 0, 90))
+    p.drawEllipse(QRectF(1, 1, size - 2, size - 2))
+    p.end()
+    return QIcon(pm)
+
+
 class Settings(GlassWindow):
+    TABS = [("stats", "Stats"), ("history", "History"), ("look", "Look"), ("writing", "Writing"),
+            ("general", "General")]
+
     def __init__(self, app):
-        super().__init__("Peelpad", size=(640, 720), minimum=(560, 600))
+        super().__init__("Peelpad", size=(700, 780), minimum=(600, 620))
         self.app = app
-        tabs = Segmented([("stats", "Stats"), ("look", "Look"), ("general", "General")], "stats")
+        tabs = Segmented(self.TABS, "stats")
         self.body.addWidget(tabs)
         self.pages = QStackedWidget()
         self.body.addWidget(self.pages, 1)
-        self.page_keys = ["stats", "look", "general"]
-        self.pages.addWidget(self._stats_page())
-        self.pages.addWidget(self._look_page())
-        self.pages.addWidget(self._general_page())
-        tabs.changed.connect(lambda k: self.pages.setCurrentIndex(self.page_keys.index(k)))
+        self.page_keys = [k for k, _ in self.TABS]
+        for page in (self._stats_page(), self._history_page(), self._look_page(), self._writing_page(),
+                     self._general_page()):
+            self.pages.addWidget(page)
+        tabs.changed.connect(self._tab)
         self.tabs = tabs
+
+    def _tab(self, key: str) -> None:
+        self.pages.setCurrentIndex(self.page_keys.index(key))
+        if key in ("stats", "history"):
+            self.refresh_stats()
 
     # ---------------------------------------------------------------- stats
     def _stats_page(self) -> QWidget:
@@ -111,7 +244,7 @@ class Settings(GlassWindow):
         col.addWidget(label("Last 18 weeks", bold=True))
         self.heatmap = Heatmap()
         col.addWidget(self.heatmap)
-        legend = label("■ wrote something   ■ checked off everything   □ today", muted=True, size=12)
+        legend = label("", muted=True, size=12)
         legend.setTextFormat(Qt.TextFormat.RichText)
         legend.setText(f"<span style='color:{NEON[0][1]}'>■</span> wrote something &nbsp; "
                        f"<span style='color:{NEON[3][1]}'>■</span> checked off everything &nbsp; "
@@ -129,24 +262,114 @@ class Settings(GlassWindow):
         self.numbers["tasks"].setText(f"{s['tasks_done']} / {s['tasks_total']}")
         self.heatmap.set_days(s["written"], s["completed"])
         self.rate.setText(f"{s['completion']}% of all your tasks are done · {s['notes_pinned']} notes pinned now")
+        self.month.set_log(self.app.store.history())
+        self._show_day(self.month.selected)
+
+    # ---------------------------------------------------------------- history
+    def _history_page(self) -> QWidget:
+        page = QWidget()
+        col = QVBoxLayout(page)
+        col.setContentsMargins(0, 6, 0, 0)
+        col.setSpacing(8)
+        bar = QHBoxLayout()
+        back = QPushButton("‹")
+        ahead = QPushButton("›")
+        this = QPushButton("Today")
+        for b in (back, ahead):
+            b.setFixedWidth(44)
+        self.month_name = label("", bold=True, size=16)
+        bar.addWidget(back)
+        bar.addWidget(self.month_name, 1, Qt.AlignmentFlag.AlignCenter)
+        bar.addWidget(this)
+        bar.addWidget(ahead)
+        col.addLayout(bar)
+        self.month = MonthView()
+        col.addWidget(self.month, 3)
+        self.day_text = label("", size=13)
+        self.day_text.setTextFormat(Qt.TextFormat.RichText)
+        self.day_text.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.day_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        inner = QWidget()
+        box = QVBoxLayout(inner)
+        box.setContentsMargins(4, 0, 4, 0)
+        box.addWidget(self.day_text)
+        box.addStretch(1)
+        col.addWidget(scrolled(inner), 2)
+
+        def move(months):
+            self.month.shift(months)
+            self._month_title()
+
+        def go_today():
+            self.month.month = date.today().replace(day=1)
+            self.month.selected = date.today().isoformat()
+            self.month.update()
+            self._month_title()
+            self._show_day(self.month.selected)
+
+        back.clicked.connect(lambda: move(-1))
+        ahead.clicked.connect(lambda: move(1))
+        this.clicked.connect(go_today)
+        self.month.picked.connect(self._show_day)
+        self.month.picked.connect(lambda _: self._month_title())
+        self._month_title()
+        return page
+
+    def _month_title(self) -> None:
+        self.month_name.setText(self.month.month.strftime("%B %Y"))
+
+    def _show_day(self, key: str) -> None:
+        day = self.app.store.history().get(key, {"done": [], "written": []})
+        when = date.fromisoformat(key).strftime("%A %d %B %Y")
+        parts = [f"<b style='font-size:15px'>{when}</b>"]
+        if not day["done"] and not day["written"]:
+            parts.append("<br>Nothing written or checked off this day.")
+        if day["done"]:
+            parts.append(f"<br><b style='color:{NEON[3][1]}'>✓ Checked off ({len(day['done'])})</b>")
+            parts += [f"&nbsp;&nbsp;✓ {html.escape(t)}" for t in day["done"]]
+        if day["written"]:
+            parts.append(f"<br><b style='color:{NEON[0][1]}'>✎ Written ({len(day['written'])})</b>")
+            parts += [f"&nbsp;&nbsp;• {html.escape(t)}" for t in day["written"]]
+        self.day_text.setText("<br>".join(parts))
 
     # ---------------------------------------------------------------- look
     def _look_page(self) -> QWidget:
-        page = QWidget()
-        outer = QVBoxLayout(page)
-        outer.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
         inner = QWidget()
         col = QVBoxLayout(inner)
         col.setContentsMargins(0, 6, 6, 0)
         col.setSpacing(10)
-        col.addWidget(label("Note skin", bold=True))
+        col.addWidget(label("Note look", bold=True))
         self.skin_grid = QGridLayout()
         self.skin_grid.setSpacing(8)
         col.addLayout(self.skin_grid)
         self.skin_group = QButtonGroup(self)
         self.skin_group.setExclusive(True)
+
+        col.addWidget(label("Your colours", bold=True))
+        mine = QHBoxLayout()
+        self.paper_button = QPushButton("Paper colour…")
+        self.ink_button = QPushButton("Ink colour…")
+        self.mine_glow = QCheckBox("Glowing ink")
+        self.mine_glow.setChecked(bool(self.app.store.data["mine"].get("glow", True)))
+        self.paper_button.clicked.connect(lambda: self._pick_mine("paper", "Paper colour"))
+        self.ink_button.clicked.connect(lambda: self._pick_mine("ink", "Ink colour"))
+        self.mine_glow.toggled.connect(lambda on: self.app.set_mine(glow=on))
+        mine.addWidget(self.paper_button)
+        mine.addWidget(self.ink_button)
+        mine.addWidget(self.mine_glow)
+        mine.addStretch()
+        col.addLayout(mine)
+        self._mine_icons()
+
+        col.addWidget(label("Size", bold=True))
+        self.size_slider = SliderRow("Pad sheets", 140, 640, self.app.store.data.get("note_size", 300), " px")
+        self.size_slider.changed.connect(lambda v: self.app.set_note_size(round(v)))
+        col.addWidget(self.size_slider)
+        col.addWidget(label("Pinned notes can be any size: drag a note's bottom-right corner (hold Shift to "
+                            "keep its shape), or hold Ctrl and turn the mouse wheel over it. Ctrl + wheel over "
+                            "the pad changes the size of its sheets.", muted=True, size=12))
+
+        col.addWidget(label("Your own skin", bold=True))
         row = QHBoxLayout()
         upload = QPushButton("Upload your own skin…")
         upload.setProperty("primary", True)
@@ -162,7 +385,7 @@ class Settings(GlassWindow):
         col.addLayout(row)
         spec = label(
             f"<b>Design your own skin</b> — scary, cute, anything:<br>"
-            f"• <b>Size:</b> {TEMPLATE} × {TEMPLATE} px (a square). Other sizes work too: notes keep "
+            f"• <b>Size:</b> {TEMPLATE} × {TEMPLATE} px (a square). Other sizes work too: new notes take "
             f"your picture's shape, and anything from 300 px up stays sharp.<br>"
             f"• <b>Format:</b> PNG. Transparent pixels are see-through on your desktop (and clicks go through "
             f"them), so a skin can be any shape: a ghost, a cat, a torn page. JPG and WebP work without transparency.<br>"
@@ -170,20 +393,26 @@ class Settings(GlassWindow):
             f"{SIDE} px in from the left, right and bottom, and {GLUE} px down from the top. "
             f"The top {GLUE} px is the glue band, where the pin sits and where you grab the note. Decorate it, "
             f"but keep the text area calm so tasks stay readable.<br>"
-            f"• <b>Ink:</b> picked for you (dark on light pictures, light on dark), or set it below.<br>"
+            f"• <b>Ink:</b> picked for you (dark on light pictures, light on dark), or set it in Writing.<br>"
             f"Save the template, paint over it in any editor, upload it, and every note switches to it at once.",
             size=12)
         spec.setTextFormat(Qt.TextFormat.RichText)
         col.addWidget(spec)
-        col.addWidget(label("Ink", bold=True))
-        self.ink = Segmented([("auto", "Auto"), ("dark", "Dark"), ("light", "Light")], self.app.store.data["ink"])
-        self.ink.changed.connect(self.app.set_ink)
-        col.addWidget(self.ink)
         col.addStretch(1)
-        scroll.setWidget(inner)
-        outer.addWidget(scroll)
         self.fill_skins()
-        return page
+        return scrolled(inner)
+
+    def _mine_icons(self) -> None:
+        mine = self.app.store.data["mine"]
+        self.paper_button.setIcon(swatch_icon(QColor(mine.get("paper", "#1B1E2B"))))
+        self.ink_button.setIcon(swatch_icon(QColor(mine.get("ink", "#7DF9FF"))))
+
+    def _pick_mine(self, key: str, title: str) -> None:
+        start = QColor(self.app.store.data["mine"].get(key, "#FFFFFF"))
+        color = QColorDialog.getColor(start, self, title)
+        if color.isValid():
+            self.app.set_mine(**{key: color.name()})
+            self._mine_icons()
 
     def fill_skins(self) -> None:
         while self.skin_grid.count():
@@ -192,32 +421,32 @@ class Settings(GlassWindow):
                 self.skin_group.removeButton(w)
                 w.deleteLater()
         current = self.app.store.data["skin"]
-        for i, skin in enumerate(all_skins(self.app.skins_dir)):
+        for i, skin in enumerate(all_skins(self.app.skins_dir, self.app.store.data["mine"])):
             b = QPushButton()
             b.setCheckable(True)
             b.setProperty("swatch", True)
-            b.setFixedSize(96, 96)
-            icon = QPixmap(78, 78)
+            b.setFixedSize(88, 88)
+            icon = QPixmap(70, 70)
             icon.fill(Qt.GlobalColor.transparent)
             p = QPainter(icon)
             p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
             if skin.key == "neon":
                 for j in range(4):
-                    img = preview(skin, 44, (j + 1) % 4)
-                    p.drawImage(QRectF(4 + j * 9, 4 + j * 9, 44, 44), img)
+                    img = preview(skin, 40, (j + 1) % 4)
+                    p.drawImage(QRectF(3 + j * 9, 3 + j * 9, 40, 40), img)
             else:
-                img = preview(skin, 78)
-                scale = min(78 / img.width(), 78 / img.height())
+                img = preview(skin, 70)
+                scale = min(70 / img.width(), 70 / img.height())
                 w, h = img.width() * scale, img.height() * scale
-                p.drawImage(QRectF((78 - w) / 2, (78 - h) / 2, w, h), img)
+                p.drawImage(QRectF((70 - w) / 2, (70 - h) / 2, w, h), img)
             p.end()
             b.setIcon(QIcon(icon))
-            b.setIconSize(QSize(78, 78))
-            b.setToolTip(skin.name if skin.key != "neon" else "Neon (each sheet a new colour)")
+            b.setIconSize(QSize(70, 70))
+            b.setToolTip(skin.name)
             b.setChecked(skin.key == current)
             b.clicked.connect(lambda _=False, k=skin.key: self.app.set_skin(k))
             self.skin_group.addButton(b)
-            self.skin_grid.addWidget(b, i // 5, i % 5)
+            self.skin_grid.addWidget(b, i // 6, i % 6)
         self.remove_button.setVisible(current.startswith("custom:"))
         self.frame.style_children()
 
@@ -253,6 +482,62 @@ class Settings(GlassWindow):
             pass
         self.fill_skins()
 
+    # ---------------------------------------------------------------- writing
+    def _writing_page(self) -> QWidget:
+        d = self.app.store.data
+        inner = QWidget()
+        col = QVBoxLayout(inner)
+        col.setContentsMargins(0, 6, 6, 0)
+        col.setSpacing(10)
+        col.addWidget(label("Font", bold=True))
+        row = QHBoxLayout()
+        self.font_box = QFontComboBox()
+        self.font_box.setCurrentFont(QFont(d.get("font") or hand_family()))
+        self.font_box.currentFontChanged.connect(lambda f: self.app.set_writing("font", f.family()))
+        default = QPushButton("Handwriting (default)")
+        default.clicked.connect(self._default_font)
+        row.addWidget(self.font_box, 1)
+        row.addWidget(default)
+        col.addLayout(row)
+        self.text_size = SliderRow("Text size", 60, 160, round(100 * float(d.get("text_scale", 1.0))), " %")
+        self.text_size.changed.connect(lambda v: self.app.set_writing("text_scale", v / 100))
+        col.addWidget(self.text_size)
+
+        col.addWidget(label("Ink", bold=True))
+        ink = d.get("ink", "auto")
+        self.ink = Segmented([("auto", "Auto"), ("dark", "Dark"), ("light", "Light"), ("pick", "Pick a colour…")],
+                             "pick" if ink.startswith("#") else ink)
+        self.ink.changed.connect(self._ink)
+        col.addWidget(self.ink)
+        col.addWidget(label("Auto writes in each look's own ink: dark on neon and white paper, glowing blue on "
+                            "Midnight, and so on.", muted=True, size=12))
+
+        col.addWidget(label("Neon glow", bold=True))
+        self.glow = Segmented([("auto", "Auto"), ("on", "On"), ("off", "Off")], d.get("glow", "auto"))
+        self.glow.changed.connect(lambda k: self.app.set_writing("glow", k))
+        col.addWidget(self.glow)
+        col.addWidget(label("The ink shines in its own colour, like a neon sign. Best on dark paper "
+                            "(Midnight, Neon night, Toxic, or your own colours).", muted=True, size=12))
+        col.addStretch(1)
+        return scrolled(inner)
+
+    def _default_font(self) -> None:
+        self.font_box.blockSignals(True)
+        self.font_box.setCurrentFont(QFont(hand_family()))
+        self.font_box.blockSignals(False)
+        self.app.set_writing("font", "")
+
+    def _ink(self, key: str) -> None:
+        if key != "pick":
+            self.app.set_writing("ink", key)
+            return
+        now = self.app.store.data.get("ink", "auto")
+        color = QColorDialog.getColor(QColor(now if now.startswith("#") else "#3DB2FF"), self, "Ink colour")
+        if color.isValid():
+            self.app.set_writing("ink", color.name())
+        elif not now.startswith("#"):
+            self.ink.set(now)
+
     # ---------------------------------------------------------------- general
     def _general_page(self) -> QWidget:
         page = QWidget()
@@ -280,7 +565,7 @@ class Settings(GlassWindow):
             "or pull it away to lift it, until it tears off. Drop it anywhere: it stays pinned on top.<br>"
             "• <b>Ctrl+Enter</b> peels the sheet off for you.<br>"
             "• Right-click a check box to make that row a plain line.<br>"
-            "• Drag a pinned note by its paper, resize it from the bottom-right corner.<br>"
+            "• Drag a pinned note by its paper. Resize it from the bottom-right corner, or with Ctrl + mouse wheel.<br>"
             "• Check off every task and the note crumples away. ✓ finishes it by hand, ✕ throws it away.<br>"
             "• Close the pad and Peelpad keeps running in the tray.", size=12)
         help_text.setTextFormat(Qt.TextFormat.RichText)
@@ -303,4 +588,3 @@ class Settings(GlassWindow):
     def closeEvent(self, event):
         event.ignore()
         self.hide()
-

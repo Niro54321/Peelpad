@@ -50,7 +50,8 @@ class Pad(Paper):
     # geometry
     def paper_size(self) -> tuple[int, int]:
         aspect = self.skin().aspect or 1.0
-        return WIDTH, round(WIDTH / aspect)
+        width = int(self.app.store.data.get("note_size", WIDTH))
+        return width, round(width / aspect)
 
     def paper_rect(self) -> QRectF:
         w, h = self.paper_size()
@@ -268,6 +269,12 @@ class Pad(Paper):
         m.addSeparator()
         m.addAction("Quit Peelpad", self.app.quit)
         m.exec(at)
+
+    def wheelEvent(self, event):
+        """Ctrl + wheel changes the size of the pad's sheets."""
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier and not self.actor:
+            step = 20 if event.angleDelta().y() > 0 else -20
+            self.app.set_note_size(self.app.store.data.get("note_size", WIDTH) + step)
 
     def moveEvent(self, event):
         if not self.actor:
