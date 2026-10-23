@@ -10,15 +10,16 @@ off every task, the note crumples into a ball and disappears.
 ## What it does
 
 - **A pad you peel from.** Write on the top sheet, then grab the paper and pull.
-  Drag in over the sheet and it curls back over a little roll, showing its paler
-  back. Pull it away and the glue holds for a moment while the sheet bends up
-  toward you, then it tears off. Carried around, it swings and ripples with the
-  air. Let go before it tears and it springs back onto the pad.
+  It curls back over a little roll, showing its paler back, and the curl
+  travels across the sheet as far as you pull, until the glue lets go. Carried
+  around, it swings and ripples with the air. Let go before it tears and it
+  springs back onto the pad.
 - **Pinned anywhere, any size.** A torn-off note lands where you drop it and
-  stays on top of every app. You can have as many as you like. Drag one by its
-  paper to move it. Resize it freely from the bottom-right corner (hold Shift to
-  keep its shape), or hold Ctrl and turn the mouse wheel over it. Ctrl + wheel
-  over the pad changes the size of its sheets.
+  stays on top of every app. You can have as many as you like. Pick one up by
+  its paper and it swings like a sheet from the pad. To resize it, press ↕
+  under it, drag the handles (Shift keeps its shape) and press ✓. Or hold Ctrl
+  and turn the mouse wheel over it. Ctrl + wheel over the pad changes the size
+  of its sheets.
 - **Tasks and text.** Every row has a check box. Right-click the box to make the
   row a plain line instead. Arabic and other right-to-left text works.
 - **Crumple when done.** Check off the last task and the note scrunches into a
@@ -49,6 +50,12 @@ Settings → Look → **Upload your own skin…** Every note and the pad switch 
 | Safe text area | **480 × 444 px**: 60 px in from the left, right and bottom, 96 px down from the top. Tasks are written here, so keep it calm enough to read on. |
 | Ink | Picked for you: dark ink on light pictures, light ink on dark ones. You can also choose any colour, with or without the neon glow, in Settings → Writing. |
 
+**Any shape.** The note takes the shape of your picture: a frame with skulls
+peeking over the edge, a circle, a cat. Peelpad finds the calm middle of the
+picture and writes there; move or resize that text box yourself in Settings →
+Look → Text box. Many "transparent" PNGs from the web have the grey-and-white
+checkerboard painted in. Peelpad spots that and makes it truly see-through.
+
 **Save the template PNG…** gives you a 600 × 600 guide with the glue band and safe
 area marked. Paint over it in any editor, then upload it.
 
@@ -63,8 +70,8 @@ area marked. Paint over it in any editor, then upload it.
 | Right-click a check box | plain line ↔ task |
 | Right-click the pad | settings, keep the pad on top, hide, quit |
 
-Closing the pad keeps Peelpad running in the tray, along with your pinned notes.
-Click the tray icon to bring the pad back.
+– minimises the pad to the taskbar. Peelpad also lives in the tray with your
+pinned notes; right-click the tray icon to quit.
 
 ## Install
 
@@ -103,21 +110,23 @@ shaded by how it faces a light at the top left.
 
 - **Curl:** the classic page-curl model. The part past the fold line wraps
   around a cylinder and then lies flat, face down, on top. The fold line is
-  solved so the point you grabbed stays under the cursor.
-- **Lift:** the sheet bends up from a hinge with even curvature and is seen in
-  perspective. It bends more the harder you pull, until the glue lets go.
+  solved so the point you grabbed stays under the cursor. Pull outwards and the
+  outward part of the pull is mirrored back in, so the curl still travels across
+  the sheet. It tears off once half the glue band has come up.
 - **Carry:** the sheet turns on the point you hold, trailing behind your motion
   on a damped spring, and a travelling wave makes it flutter.
 - **Crumple:** an 11 × 11 grid of paper (242 triangles) moves toward a noisy sphere. The edges
   go first and wrinkles rise and fall on the way. Each facet is lit by its normal
   and shows the front or the back of the paper.
 
-All of this runs in a small see-through, click-through window that is only as
-big as the moving paper and closes the moment it stops, so nothing ever sits
-over the rest of your screen.
+All of this runs in a see-through, click-through window that exists only while
+paper is moving and closes the moment it stops. While you hold the paper,
+Peelpad checks the real mouse button every frame, so a sheet can never be left
+hanging on the screen.
 
 Your notes are kept in `%APPDATA%\Peelpad\notes.json`, and uploaded skins in
-`%APPDATA%\Peelpad\skins`.
+`%APPDATA%\Peelpad\skins`. They stay on your PC. Peelpad has no account and
+sends nothing anywhere, so each person who installs it has only their own notes.
 
 ## Licence
 
