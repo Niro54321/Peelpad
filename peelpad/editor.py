@@ -7,7 +7,7 @@ The editor writes straight into the note's dict.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtWidgets import QAbstractButton, QFrame, QHBoxLayout, QLineEdit, QScrollArea, QVBoxLayout, QWidget
 
@@ -124,6 +124,9 @@ class RowEdit(QLineEdit):
     def focusOutEvent(self, event):
         super().focusOutEvent(event)
         self.update()
+        # a row added with Enter and left empty goes away (the only row stays, to write in)
+        if not self.text().strip():
+            QTimer.singleShot(0, lambda: self.editor.drop_if_empty(self))
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -197,6 +200,8 @@ class TaskEditor(QScrollArea):
         for w, _, _ in self.rows:
             w.deleteLater()
         self.rows = []
+        # empty rows left from before don't come back (one row stays, to write in)
+        note["rows"][:] = [r for r in note["rows"] if r["text"].strip()] or note["rows"][:1]
         if not note["rows"]:
             note["rows"].append(store.new_row())
         for row in note["rows"]:
@@ -297,20 +302,35 @@ class TaskEditor(QScrollArea):
         self.restyle()
         self.changed.emit()
 
+    def drop_if_empty(self, edit: RowEdit) -> None:
+        """Take away an empty row nobody is writing in, without moving the cursor."""
+        try:
+            if edit.hasFocus() or edit.text().strip() or len(self.rows) < 2:
+                return
+        except RuntimeError:                 # that row was already taken away (Backspace, a new note)
+            return
+        index = next((i for i, r in enumerate(self.rows) if r[2] is edit), None)
+        if index is None:
+            return
+        holder, _, _ = self.rows.pop(index)
+        if edit.row in self.note["rows"]:
+            self.note["rows"].remove(edit.row)
+        holder.deleteLater()
+        self.restyle()
+        self.changed.emit()
+
     def focus_step(self, edit: RowEdit, step: int) -> None:
         index = next(i for i, r in enumerate(self.rows) if r[2] is edit) + step
         if 0 <= index < len(self.rows):
             self.rows[index][2].setFocus()
 
     def focus_end(self) -> None:
-        """Put the cursor at the end: on the last row, or a new one if that has text."""
+        """Put the cursor at the end of the last row. A new row only ever comes from Enter."""
         if not self.rows:
             return
         last = self.rows[-1][2]
-        if last.text().strip():
-            self.add_after(last)
-        else:
-            last.setFocus()
+        last.setFocus()
+        last.end(False)
 
     def text_rect(self) -> QRectF:
         """Where the rows are, in this widget's coordinates."""

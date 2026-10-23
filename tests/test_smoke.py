@@ -671,3 +671,20 @@ def test_a_finished_note_stays_when_auto_crumple_is_off():
     assert crumpled == []
     win.done()                                        # ✓ still finishes it by hand
     assert crumpled == [True]
+
+
+def test_a_click_never_adds_an_empty_row_and_empty_rows_go_away():
+    from peelpad.editor import TaskEditor
+
+    note = note_with("hello")
+    ed = TaskEditor()
+    ed.resize(300, 200)
+    ed.bind(note, skins.DARK_INK, 17)
+    ed.focus_end()                                   # what a click on the paper does
+    assert [r["text"] for r in note["rows"]] == ["hello"]
+    ed.add_after(ed.rows[0][2])                      # Enter: a new row
+    assert len(note["rows"]) == 2
+    ed.drop_if_empty(ed.rows[1][2])                  # left empty when you click away: gone
+    assert [r["text"] for r in note["rows"]] == ["hello"] and len(ed.rows) == 1
+    ed.drop_if_empty(ed.rows[0][2])                  # but the only row always stays
+    assert len(ed.rows) == 1
