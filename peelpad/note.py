@@ -13,8 +13,8 @@ from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
 from peelpad import physics, store
 from peelpad.editor import TaskEditor
-from peelpad.skins import (GLUE, NEON, TEMPLATE, PictureSkin, Skin, font_px, note_images, safe_rect, text_effect,
-                           writing_colors, writing_layer)
+from peelpad.skins import (GLUE, NEON, TEMPLATE, PictureSkin, Skin, font_px, safe_rect, text_effect,
+                           writing_colors, writing_layer, LiveTexture)
 
 MARGIN = 18          # room around the paper for its shadow (and the pin)
 BAR = 46             # room under the paper for the buttons
@@ -477,11 +477,11 @@ class NoteWindow(Paper):
         self._settle(0.0)
         r = self.global_paper()
         dpr = max(1.0, self.devicePixelRatioF())
-        front, back = note_images(self.note, self.skin(), round(r.width()), round(r.height()), dpr)
-        self.carrying = PeelActor(r, grab, front, back, dpr, 0, on_landed=self._landed, on_returned=self._landed_back,
-                                  carry=True, follow=True, sticky=sticky)
+        live = LiveTexture(self.note, self.skin(), round(r.width()), round(r.height()), dpr)
+        self.carrying = PeelActor(r, grab, live.front(), live.back, dpr, 0, on_landed=self._landed,
+                                  on_returned=self._landed_back, carry=True, follow=True, sticky=sticky, live=live)
         self.app.stages.at(grab, follow=True, catch=sticky).add(self.carrying)
-        QTimer.singleShot(16, self.hide)            # the stage shows the sheet first, so nothing blinks
+        self.hide()                                 # the stage already shows the sheet, so nothing blinks
 
     def _landed(self, rect: QRectF) -> None:
         self.carrying = None

@@ -121,8 +121,8 @@ def paint_bands(p: QPainter, painted: Painted, front: QImage, back: QImage, orig
             q.drawPolygon(poly)
         q.end()
         p.setTransform(base)
-        p.setOpacity(0.32 * shadow)
-        p.drawImage(QPointF(box.left() + z * 0.16 + 1, box.top() + z * 0.28 + 2), layer)
+        p.setOpacity(0.2 * shadow)
+        p.drawImage(QPointF(box.left() + z * 0.12 + 1, box.top() + z * 0.2 + 1.5), layer)
         p.setOpacity(1.0)
     fold = painted.shape.fold_line
     black, white = QBrush(masks.black), QBrush(masks.white)
@@ -204,6 +204,7 @@ class Stage(QWidget):
         self._place(force=True)
         self.show()
         self.raise_()
+        self.repaint()               # the first frame is on screen now, before the sheet's own window hides
         if not self.timer.isActive():
             self.clock.start()
             self.timer.start()
@@ -308,12 +309,13 @@ class PeelActor:
 
     def __init__(self, sheet: QRectF, grab: QPointF, front: QImage, back: QImage, k: float, glue: float,
                  on_landed, on_returned, on_torn=None, carry: bool = False, follow: bool = False,
-                 sticky: bool = False):
+                 sticky: bool = False, live=None):
         self.stage: Stage | None = None
         self.sheet = QRectF(sheet)
         self.w, self.h = sheet.width(), sheet.height()
         self.g = (grab.x() - sheet.left(), grab.y() - sheet.top())
         self.front, self.back, self.k, self.glue = front, back, k, glue
+        self.live = live               # a LiveTexture: an animated skin keeps moving in your hand
         self.masks = Masks(front, k)
         self.on_landed, self.on_returned, self.on_torn = on_landed, on_returned, on_torn
         self.follow = follow           # read the real mouse every frame
@@ -450,7 +452,8 @@ class PeelActor:
 
     def paint(self, p: QPainter, origin: QPointF) -> None:
         if self.painted:
-            paint_bands(p, self.painted, self.front, self.back, origin, self.masks)
+            front = self.live.front() if self.live is not None else self.front
+            paint_bands(p, self.painted, front, self.back, origin, self.masks)
             p.resetTransform()
 
 

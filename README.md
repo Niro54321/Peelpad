@@ -16,7 +16,7 @@ off every task, the note crumples into a ball and disappears.
   springs back onto the pad.
 - **Pinned anywhere, any size.** A torn-off note lands where you drop it and
   stays on top of every app. You can have as many as you like. Pick one up by
-  its paper and it swings like a sheet from the pad, or double-click it: it
+  its paper and it swings like a sheet from the pad, or double-click it (the pad too): it
   follows your mouse with no button held and lands where you click. To resize it, press ↕
   under it, drag the handles (Shift keeps its shape) and press ✓. Or hold Ctrl
   and turn the mouse wheel over it. Ctrl + wheel over the pad changes the size
@@ -35,6 +35,8 @@ off every task, the note crumples into a ball and disappears.
   checked, and a heat map of the last 18 weeks.
 - **History.** Settings → History is a calendar: each day shows how many tasks
   you checked off. Click a day to see what you checked off and what you wrote.
+  Tick tasks to delete them, delete a whole day, or delete everything (notes
+  still pinned on your desktop stay).
 - **Looks.** The default is four neon sticky-note colours (lemon, mango,
   bubblegum, lime), a new one for each sheet. Or pick one colour, or a theme:
   Midnight (black paper, glowing blue ink), Neon night (glowing pink), Toxic
@@ -67,10 +69,18 @@ checkerboard painted in. Peelpad spots that and makes it truly see-through.
 area marked. Paint over it in any editor, then upload it.
 
 **Animated skins.** Upload an animated GIF, APNG or WebP and it plays on every
-note, looping. Peelpad comes with two: *Skull parade*, a little skull running
-along the bottom of a cream card while a bat flaps and the stars twinkle, and
-*Apple worm*, a green worm crawling all the way round a black frame, munching
-the apples on it (they grow back).
+note, looping. Peelpad comes with seven, drawn in code so they stay sharp at
+any size, and the writing in the middle never moves:
+
+- *Retro LED clock*: seven-segment time, seconds and date in the colour you
+  pick, a ring of LEDs that fills every minute and a pixel bar that grows each
+  minute of the hour
+- *Skull parade*: a little skull runs along the bottom, a bat flaps, stars twinkle
+- *Apple worm*: a worm crawls round a black frame eating the apples (they grow back)
+- *Aquarium*: two fish swim round a frosted card, bubbles rise, seaweed sways
+- *Night sky*: twinkling stars, a glowing moon, a shooting star now and then, drifting clouds
+- *Rainy window*: drops run down the glass while a cat sleeps on the sill
+- *Synthwave*: a striped sun sets behind palms over an endless neon grid
 Settings → Look → **Copy a prompt for an animated skin** gives you a ready
 brief to paste into an AI animation tool (or send to an artist). It is also in
 [docs/animated-skin-prompt.md](docs/animated-skin-prompt.md).

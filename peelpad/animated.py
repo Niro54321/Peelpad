@@ -14,7 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
 
-from peelpad.skins import PictureSkin, Skin
+from peelpad.skins import PictureSkin, Skin, cover_with_paper
 
 MAX_FRAMES = 150
 MAX_SIDE = 720
@@ -83,9 +83,7 @@ class AnimatedSkin(PictureSkin):
 
     def paint_back(self, p: QPainter, w: float, h: float, color: int) -> None:
         p.drawImage(QRectF(0, 0, w, h), self.current())
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
-        p.fillRect(QRectF(0, 0, w, h), QColor(255, 255, 255, 150))
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        cover_with_paper(p, w, h)
 
 
 # ---------------------------------------------------------------- Peelpad's own: Skull parade
@@ -296,9 +294,7 @@ class SkullParade(Skin):
 
     def paint_back(self, p: QPainter, w: float, h: float, color: int) -> None:
         self.paint_front(p, w, h, color, t=0.0)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
-        p.fillRect(QRectF(0, 0, w, h), QColor(255, 255, 255, 150))
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        cover_with_paper(p, w, h)
 
 
 # ---------------------------------------------------------------- Peelpad's own: Apple worm
@@ -319,6 +315,8 @@ def _apple(p: QPainter, c: QPointF, r: float, bitten: float = 0.0) -> None:
     dent = QPainterPath()
     dent.addEllipse(QPointF(c.x(), c.y() - r * 0.86), r * 0.2, r * 0.2)
     body = body.subtracted(dent)
+    if bitten >= 0.98:
+        return
     for i in range(int(bitten * 4)):
         bite = QPainterPath()
         bite.addEllipse(QPointF(c.x() + r * (0.95 - i * 0.28), c.y() + r * (0.35 - i * 0.3)), r * 0.42, r * 0.42)
@@ -414,17 +412,19 @@ class AppleWorm(Skin):
         self.backdrop.paint(p, w, h, self._still)
         track = self._track(self._outer(w, h), s)
         head = (t / self.LOOP) % 1.0
-        # the apples: eaten when the head reaches them, back again once the worm has gone
+        # the apples: bitten as the head comes up to them, gone the moment it arrives,
+        # and grown back once the worm is far away
+        bite = 0.035
         for a in self.APPLES:
-            since = (head - a) % 1.0
+            since = (head - a) % 1.0                 # how long ago the head passed it
             pos = track.pointAtPercent(a)
-            if since < 0.03:
-                _apple(p, pos, s * 0.045, bitten=since / 0.03)
-            elif since > 0.55:
+            if since > 1 - bite:                     # the head is right there: bites
+                _apple(p, pos, s * 0.045, bitten=(since - (1 - bite)) / bite)
+            elif since > 0.55:                       # gone while the worm is near, then grows back
                 _apple(p, pos, s * 0.045 * min(1.0, (since - 0.55) / 0.1))
         # the worm: a head and a body that follows the track, wiggling as it goes
         step = 0.018
-        munch = any((head - a) % 1.0 < 0.03 for a in self.APPLES)
+        munch = any((a - head) % 1.0 < bite for a in self.APPLES)
         for i in range(self.SEGMENTS, -1, -1):
             at = (head - i * step) % 1.0
             pt = track.pointAtPercent(at)
@@ -466,6 +466,4 @@ class AppleWorm(Skin):
 
     def paint_back(self, p: QPainter, w: float, h: float, color: int) -> None:
         self.paint_front(p, w, h, color, t=0.0)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
-        p.fillRect(QRectF(0, 0, w, h), QColor(255, 255, 255, 150))
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        cover_with_paper(p, w, h)

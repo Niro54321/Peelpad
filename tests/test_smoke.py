@@ -462,3 +462,70 @@ def test_apple_worm_crawls_and_keeps_the_middle_calm():
     assert all(a.pixelColor(x, y) == b.pixelColor(x, y)
                for x in range(int(calm.left()), int(calm.right()), 7)
                for y in range(int(calm.top()), int(calm.bottom()), 7))
+
+
+def test_history_deletes_ticked_a_day_or_everything(tmp_path):
+    s = store.Store(tmp_path / "notes.json")
+    old = note_with("old one", "old two", done=(0, 1))
+    for r in old["rows"]:
+        r["created"], r["done_at"] = "2026-10-01", "2026-10-01"
+    old["status"] = "finished"
+    pinned = note_with("still pinned")
+    pinned["rows"][0]["created"] = "2026-10-01"
+    pinned["status"] = "pinned"
+    s.data["notes"] += [old, pinned]
+    s.wrote("2026-10-01")
+    entries = store.day_entries(s.data, "2026-10-01")
+    assert sum(e["live"] for e in entries) == 1 and len(entries) == 5
+    first = next(e for e in entries if e["text"] == "old one" and e["what"] == "done")
+    assert store.forget(s.data, [first]) == 0
+    assert [r["text"] for r in old["rows"]] == ["old two"]
+    assert store.forget_day(s.data, "2026-10-01") == 1            # the pinned task stays
+    assert old not in s.data["notes"] and pinned in s.data["notes"]
+    assert "2026-10-01" in s.data["days"]                          # it still has a live task
+    store.forget_all(s.data)
+    assert s.data["notes"] == [pinned]
+
+
+def test_animated_skin_keeps_moving_in_your_hand(monkeypatch):
+    from peelpad import animated
+    from peelpad.scenes import NightSky
+
+    sky = NightSky()
+    monkeypatch.setattr(animated, "now_ms", lambda: 1000.0)
+    import peelpad.scenes as scenes
+    monkeypatch.setattr(scenes, "now_ms", lambda: 1000.0)
+    live = skins.LiveTexture(note_with("x"), sky, 200, 200, 1.0)
+    first = live.front()
+    monkeypatch.setattr(animated, "now_ms", lambda: 3400.0)
+    monkeypatch.setattr(scenes, "now_ms", lambda: 3400.0)
+    assert live.front() != first
+    still = skins.LiveTexture(note_with("x"), skins.Skin(), 200, 200, 1.0)
+    assert still.front() is still.front()
+
+
+def test_the_five_scenes_keep_the_writing_calm():
+    from peelpad.scenes import SCENES, LED
+
+    for cls in SCENES:
+        sk = cls()
+        assert sk.animated and skins.skin_for(sk.key, Path(".")).key == sk.key
+
+        def frame(t):
+            img = QImage(240, 240, QImage.Format.Format_ARGB32_Premultiplied)
+            img.fill(0)
+            p = QPainter(img)
+            sk.paint_front(p, 240, 240, 0, t=t)
+            p.end()
+            return img
+        a, b = frame(1.0), frame(3.7)
+        calm = skins.safe_rect(240, 240, sk.area)
+        assert all(a.pixelColor(x, y) == b.pixelColor(x, y)
+                   for x in range(int(calm.left()), int(calm.right()), 9)
+                   for y in range(int(calm.top()), int(calm.bottom()), 9)), cls.__name__
+    before = LED.color
+    try:
+        LED.color = QColor("#3DFF6E")
+        assert skins.skin_for("anim:clock", Path(".")).frame_id() % 1000 == QColor("#3DFF6E").rgb() % 1000
+    finally:
+        LED.color = before

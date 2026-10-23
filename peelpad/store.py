@@ -57,7 +57,8 @@ DEFAULTS = {"version": 1, "skin": "neon", "notes": [], "days": [],
             "areas": {},                # skin key -> where its text box is, if you moved it
             "checked_skins": [],        # skins already checked for a painted-in checkerboard
             "wind": True,               # pinned notes sway in the wind
-            "wind_speed": 3.6}          # m/s, up to 7.2
+            "wind_speed": 3.6,          # m/s, up to 7.2
+            "clock_color": "#FF2B2B"}   # the Retro LED clock's digits
 
 
 class Store:
@@ -137,6 +138,68 @@ def day_log(data: dict) -> dict[str, dict[str, list[str]]]:
             if r["done"] and r.get("done_at") and n["status"] != "deleted":
                 log.setdefault(r["done_at"], {"done": [], "written": []})["done"].append(text)
     return log
+
+
+ARCHIVED = ("finished", "deleted")
+
+
+def day_entries(data: dict, day: str) -> list[dict]:
+    """Every task that shows on one day of History, and where it lives. Tasks on a note
+    that is still pinned (or on the pad) are `live`: History leaves those alone."""
+    every = list(data["notes"]) + ([data["pad"]["draft"]] if data["pad"].get("draft") else [])
+    out = []
+    for n in every:
+        for i, r in enumerate(n["rows"]):
+            if r["kind"] != "task" or not r["text"].strip():
+                continue
+            entry = {"text": r["text"].strip(), "note": n["id"], "row": i, "live": n["status"] not in ARCHIVED}
+            if r["done"] and r.get("done_at") == day and n["status"] != "deleted":
+                out.append(entry | {"what": "done"})
+            if r.get("created") == day:
+                out.append(entry | {"what": "written"})
+    return out
+
+
+def forget(data: dict, entries: list[dict]) -> int:
+    """Delete tasks from History. Only finished or thrown-away notes are touched; a note
+    left with no tasks goes too. Returns how many were skipped because they are live."""
+    drop: dict[str, set[int]] = {}
+    skipped = 0
+    for e in entries:
+        if e["live"]:
+            skipped += 1
+        else:
+            drop.setdefault(e["note"], set()).add(e["row"])
+    kept = []
+    for n in data["notes"]:
+        if n["id"] in drop and n["status"] in ARCHIVED:
+            n["rows"] = [r for i, r in enumerate(n["rows"]) if i not in drop[n["id"]]]
+            if not tasks(n):
+                continue
+        kept.append(n)
+    data["notes"] = kept
+    _tidy_days(data)
+    return skipped
+
+
+def forget_day(data: dict, day: str) -> int:
+    skipped = forget(data, day_entries(data, day))
+    if not any(e["live"] for e in day_entries(data, day)) and day in data["days"]:
+        data["days"].remove(day)
+    return skipped
+
+
+def forget_all(data: dict) -> None:
+    """Everything finished or thrown away goes; notes still pinned (and the pad) stay."""
+    data["notes"] = [n for n in data["notes"] if n["status"] not in ARCHIVED]
+    live_days = set(day_log(data))
+    data["days"] = [d for d in data["days"] if d in live_days]
+
+
+def _tidy_days(data: dict) -> None:
+    """A day with nothing left on it is no longer a day you wrote."""
+    left = set(day_log(data))
+    data["days"] = [d for d in data["days"] if d in left]
 
 
 def _streaks(days: set[date], now: date) -> tuple[int, int]:

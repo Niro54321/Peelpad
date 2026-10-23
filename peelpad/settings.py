@@ -12,8 +12,8 @@ from pathlib import Path
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QFileDialog, QFontComboBox, QGridLayout,
-                               QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QStackedWidget,
-                               QVBoxLayout, QWidget)
+                               QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
+                               QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
 from peelpad.skins import (GLUE, NEON, SIDE, TEMPLATE, all_skins, hand_family, import_skin, preview,
                            save_template)
@@ -392,14 +392,24 @@ class Settings(GlassWindow):
         col.addWidget(self.month, 3)
         self.day_text = label("", size=13)
         self.day_text.setTextFormat(Qt.TextFormat.RichText)
-        self.day_text.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        self.day_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        inner = QWidget()
-        box = QVBoxLayout(inner)
-        box.setContentsMargins(4, 0, 4, 0)
-        box.addWidget(self.day_text)
-        box.addStretch(1)
-        col.addWidget(scrolled(inner), 2)
+        col.addWidget(self.day_text)
+        self.day_list = QListWidget()
+        self.day_list.setMinimumHeight(110)
+        col.addWidget(self.day_list, 2)
+        tools = QHBoxLayout()
+        forget_some = QPushButton("Delete ticked")
+        forget_some.setToolTip("Tick tasks in the list, then delete them from History")
+        forget_day = QPushButton("Delete this day")
+        forget_all = QPushButton("Delete everything…")
+        forget_all.setToolTip("Every finished or thrown-away note. Notes still pinned stay.")
+        forget_some.clicked.connect(self._forget_ticked)
+        forget_day.clicked.connect(self._forget_day)
+        forget_all.clicked.connect(self._forget_all)
+        tools.addWidget(forget_some)
+        tools.addWidget(forget_day)
+        tools.addStretch(1)
+        tools.addWidget(forget_all)
+        col.addLayout(tools)
 
         def move(months):
             self.month.shift(months)
@@ -424,18 +434,61 @@ class Settings(GlassWindow):
         self.month_name.setText(self.month.month.strftime("%B %Y"))
 
     def _show_day(self, key: str) -> None:
-        day = self.app.store.history().get(key, {"done": [], "written": []})
-        when = date.fromisoformat(key).strftime("%A %d %B %Y")
-        parts = [f"<b style='font-size:15px'>{when}</b>"]
-        if not day["done"] and not day["written"]:
-            parts.append("<br>Nothing written or checked off this day.")
-        if day["done"]:
-            parts.append(f"<br><b style='color:{NEON[3][1]}'>✓ Checked off ({len(day['done'])})</b>")
-            parts += [f"&nbsp;&nbsp;✓ {html.escape(t)}" for t in day["done"]]
-        if day["written"]:
-            parts.append(f"<br><b style='color:{NEON[0][1]}'>✎ Written ({len(day['written'])})</b>")
-            parts += [f"&nbsp;&nbsp;• {html.escape(t)}" for t in day["written"]]
-        self.day_text.setText("<br>".join(parts))
+        from peelpad.store import day_entries
+
+        entries = day_entries(self.app.store.data, key)
+        done = sum(e["what"] == "done" for e in entries)
+        when = html.escape(date.fromisoformat(key).strftime("%A %d %B %Y"))
+        summary = (f"<span style='color:{NEON[3][1]}'>✓ {done} checked off</span> &nbsp; "
+                   f"<span style='color:{NEON[0][1]}'>✎ {len(entries) - done} written</span>"
+                   if entries else "Nothing written or checked off this day.")
+        self.day_text.setText(f"<b style='font-size:15px'>{when}</b><br>{summary}")
+        self.day_list.clear()
+        self.day_entries = entries
+        for e in sorted(entries, key=lambda e: e["what"]):
+            mark = "✓" if e["what"] == "done" else "✎"
+            item = QListWidgetItem(f"{mark}  {e['text']}" + ("   · on a pinned note" if e["live"] else ""))
+            item.setData(Qt.ItemDataRole.UserRole, entries.index(e))
+            if e["live"]:
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled)          # still on your desktop: not History's to delete
+                item.setToolTip("This task is on a note that is still pinned. Finish or throw the note away first.")
+            else:
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Unchecked)
+            self.day_list.addItem(item)
+
+    def _after_forget(self, skipped: int) -> None:
+        self.app.changed()
+        self.refresh_stats()
+        if skipped:
+            QMessageBox.information(self, "Peelpad", f"{skipped} of them are on notes still pinned, so they stay. "
+                                    "Finish or throw those notes away first.")
+
+    def _forget_ticked(self) -> None:
+        from peelpad.store import forget
+
+        ticked = [self.day_entries[self.day_list.item(i).data(Qt.ItemDataRole.UserRole)]
+                  for i in range(self.day_list.count())
+                  if self.day_list.item(i).checkState() == Qt.CheckState.Checked]
+        if ticked:
+            self._after_forget(forget(self.app.store.data, ticked))
+
+    def _forget_day(self) -> None:
+        from peelpad.store import forget_day
+
+        day = self.month.selected
+        sure = QMessageBox.question(self, "Peelpad", f"Delete everything from {day} in History?")
+        if sure == QMessageBox.StandardButton.Yes:
+            self._after_forget(forget_day(self.app.store.data, day))
+
+    def _forget_all(self) -> None:
+        from peelpad.store import forget_all
+
+        sure = QMessageBox.question(self, "Peelpad", "Delete all of History: every finished or thrown-away note, "
+                                    "and the stats that come from them? Notes still pinned stay.")
+        if sure == QMessageBox.StandardButton.Yes:
+            forget_all(self.app.store.data)
+            self._after_forget(0)
 
     # ---------------------------------------------------------------- look
     def _look_page(self) -> QWidget:
@@ -449,6 +502,14 @@ class Settings(GlassWindow):
         col.addLayout(self.skin_grid)
         self.skin_group = QButtonGroup(self)
         self.skin_group.setExclusive(True)
+
+        col.addWidget(label("Retro LED clock colour", bold=True))
+        self.clock_grid = QGridLayout()
+        self.clock_grid.setSpacing(6)
+        self.clock_group = QButtonGroup(self)
+        self.clock_group.setExclusive(True)
+        col.addLayout(self.clock_grid)
+        self.fill_clock()
 
         col.addWidget(label("Text box", bold=True))
         col.addWidget(label("Where the writing goes on this look. Drag the box to move it, drag its corners to "
@@ -498,8 +559,9 @@ class Settings(GlassWindow):
         upload.clicked.connect(self.upload)
         template = QPushButton("Save the template PNG…")
         template.clicked.connect(self.template)
-        self.remove_button = QPushButton("Remove this skin")
-        self.remove_button.clicked.connect(self.remove_skin)
+        self.remove_button = QPushButton("Delete all my uploaded skins…")
+        self.remove_button.setToolTip("Only the pictures you uploaded; Peelpad's own looks stay")
+        self.remove_button.clicked.connect(self.delete_all_skins)
         row.addWidget(upload)
         row.addWidget(template)
         row.addWidget(self.remove_button)
@@ -577,11 +639,57 @@ class Settings(GlassWindow):
             b.setToolTip(skin.name)
             b.setChecked(skin.key == current)
             b.clicked.connect(lambda _=False, k=skin.key: self.app.set_skin(k))
+            if skin.key.startswith("custom:"):       # yours can be deleted; Peelpad's own can't
+                x = QPushButton("✕", b)
+                x.setToolTip("Delete this skin")
+                x.setCursor(Qt.CursorShape.PointingHandCursor)
+                x.setFixedSize(22, 22)
+                x.move(b.width() - 25, 3)
+                x.setStyleSheet("QPushButton { color: white; background: rgba(20,20,26,200); border: 1px solid "
+                                "rgba(255,255,255,120); border-radius: 11px; font-size: 11px; font-weight: 700; "
+                                "padding: 0; } QPushButton:hover { background: #FF3B5C; }")
+                x.clicked.connect(lambda _=False, k=skin.key: self.delete_skin(k))
             self.skin_group.addButton(b)
             self.skin_grid.addWidget(b, i // 6, i % 6)
-        self.remove_button.setVisible(current.startswith("custom:"))
+        self.remove_button.setVisible(any(self.app.skins_dir.glob("*.*")))
         self.area_editor.set_skin(self.app.skin)
         self.frame.style_children()
+
+    CLOCK = ["#FF2B2B", "#FF8A1F", "#FFD447", "#3DFF6E", "#22E3FF", "#3D7BFF", "#B26BFF", "#FF4FD8", "#F2F2F2"]
+
+    def fill_clock(self) -> None:
+        """Colours for the Retro LED clock's digits and dots."""
+        while self.clock_grid.count():
+            w = self.clock_grid.takeAt(0).widget()
+            if w:
+                self.clock_group.removeButton(w)
+                w.deleteLater()
+        now = self.app.store.data.get("clock_color", "#FF2B2B").upper()
+        choices = self.CLOCK + ([now] if now not in self.CLOCK else []) + ["pick"]
+        for i, key in enumerate(choices):
+            b = QPushButton("…" if key == "pick" else "")
+            b.setCheckable(True)
+            b.setProperty("swatch", True)
+            b.setFixedSize(34, 34)
+            if key != "pick":
+                b.setIcon(swatch_icon(QColor(key), 22))
+                b.setIconSize(QSize(22, 22))
+                b.setChecked(key == now)
+            b.setToolTip("Pick any colour" if key == "pick" else key)
+            b.clicked.connect(lambda _=False, k=key: self._clock(k))
+            self.clock_group.addButton(b)
+            self.clock_grid.addWidget(b, 0, i)
+        self.clock_grid.setColumnStretch(len(choices), 1)
+        self.frame.style_children()
+
+    def _clock(self, key: str) -> None:
+        if key == "pick":
+            color = QColorDialog.getColor(QColor(self.app.store.data.get("clock_color", "#FF2B2B")), self, "Clock colour")
+            if not color.isValid():
+                self.fill_clock()
+                return
+            key = color.name().upper()
+        self.app.set_clock_color(key)
 
     def upload(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Choose your skin", str(Path.home() / "Pictures"),
@@ -612,16 +720,19 @@ class Settings(GlassWindow):
         if path:
             save_template(Path(path))
 
-    def remove_skin(self) -> None:
-        key = self.app.store.data["skin"]
-        if not key.startswith("custom:"):
+    def delete_skin(self, key: str) -> None:
+        sure = QMessageBox.question(self, "Peelpad", "Delete this skin? Notes wearing it go back to neon.")
+        if sure == QMessageBox.StandardButton.Yes:
+            self.app.delete_skins([key])
+
+    def delete_all_skins(self) -> None:
+        mine = [f"custom:{f.name}" for f in self.app.skins_dir.glob("*.*")]
+        if not mine:
             return
-        self.app.set_skin("neon")
-        try:
-            (self.app.skins_dir / key[7:]).unlink()
-        except OSError:
-            pass
-        self.fill_skins()
+        sure = QMessageBox.question(self, "Peelpad", f"Delete all {len(mine)} skins you uploaded? "
+                                    "Peelpad's own looks stay.")
+        if sure == QMessageBox.StandardButton.Yes:
+            self.app.delete_skins(mine)
 
     # ---------------------------------------------------------------- writing
     def _writing_page(self) -> QWidget:

@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPointF, QRectF, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QMenu, QToolTip
+from PySide6.QtWidgets import QApplication, QMenu, QToolTip
 
 from peelpad import store
 from peelpad.note import MARGIN, Paper, paper_image, round_button, shadow_image
-from peelpad.skins import GLUE, TEMPLATE, note_images
+from peelpad.skins import GLUE, TEMPLATE, LiveTexture
 from peelpad.stage import PeelActor
 
 WIDTH = 300
@@ -29,6 +29,14 @@ class Pad(Paper):
         self.press: QPointF | None = None
         self.actor: PeelActor | None = None
         self.peeling = False
+        self.following: QPoint | None = None        # after a double-click the pad follows the mouse
+        self.follow_timer = QTimer(self)
+        self.follow_timer.setInterval(10)
+        self.follow_timer.timeout.connect(self._follow)
+        self.click_timer = QTimer(self)             # one click: write at the end; two: move the pad
+        self.click_timer.setSingleShot(True)
+        self.click_timer.setInterval(QApplication.doubleClickInterval())
+        self.click_timer.timeout.connect(self.editor.focus_end)
         self._layers: dict = {}
         self.editor.submit.connect(self.auto_peel)
         self.buttons = [round_button(self, "⚙", "Settings, stats and history", app.show_settings),
@@ -89,20 +97,21 @@ class Pad(Paper):
         r = self.paper_rect()
         top = self.note["color"]
         img, shadow = self._layer(top)
-        shaped = self.skin().aspect is not None or self.skin().animated
-        p.drawImage(QPointF(r.left() - MARGIN, r.top() - MARGIN + (0 if shaped else BLOCK)), shadow)
         # the sheets under the top one, their edges showing as the pad's side
         # (a shaped skin has no straight edge to stack, so it gets only its soft shadow)
         shaped = self.skin().aspect is not None or self.skin().animated
+        p.drawImage(QPointF(r.left() - MARGIN, r.top() - MARGIN + (0 if shaped else BLOCK)), shadow)
         for i in range(0 if shaped else LAYERS, 0, -1):
             layer, _ = self._layer((top + i) % 4, i)
             y = r.top() + BLOCK * i / LAYERS
             p.drawImage(QPointF(r.left(), y), layer)
             p.setPen(QPen(QColor(0, 0, 0, 30), 0.7))
             p.drawLine(QPointF(r.left() + 1, y + r.height() - 0.4), QPointF(r.right() - 1, y + r.height() - 0.4))
-        if self.peeling:
+        if self.peeling and not self.skin().animated:
             under, _ = self._layer((top + 1) % 4)
             p.drawImage(r.topLeft(), under)
+        elif self.peeling:
+            self.paint_paper(p, (top + 1) % 4)          # the next sheet keeps moving too
         else:
             self.paint_paper(p)
             if self.hover and store.has_content(self.note) and self.skin().aspect is None and not self.skin().animated:
@@ -171,8 +180,30 @@ class Pad(Paper):
         if self.actor:
             self.actor.release()
         elif self.press is not None:
-            self.editor.focus_end()
+            self.click_timer.start()
         self.press = None
+
+    # double-click: the pad follows the mouse, no button held, until the next click
+    def mouseDoubleClickEvent(self, event):
+        self.click_timer.stop()
+        if event.button() == Qt.MouseButton.LeftButton and not self.actor:
+            self.following = QCursor.pos() - self.pos()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            QApplication.instance().installEventFilter(self)
+            self.follow_timer.start()
+
+    def _follow(self) -> None:
+        self.move(QCursor.pos() - self.following)
+
+    def eventFilter(self, obj, event):
+        if self.following is not None and event.type() == QEvent.Type.MouseButtonPress:
+            self.following = None
+            self.follow_timer.stop()
+            QApplication.instance().removeEventFilter(self)
+            self.unsetCursor()
+            self._save_pos()
+            return True                               # that click only puts the pad down
+        return False
 
     def bar_rect(self) -> QRectF:
         r = self.paper_rect()
@@ -181,9 +212,9 @@ class Pad(Paper):
     def start_peel(self, grab_global: QPointF, by_hand: bool = True) -> None:
         w, h = self.paper_size()
         dpr = max(1.0, self.devicePixelRatioF())
-        front, back = note_images(self.note, self.skin(), w, h, dpr)
-        self.actor = PeelActor(self.global_paper(), grab_global, front, back, dpr, h * GLUE / TEMPLATE,
-                               on_landed=self._landed, on_returned=self._returned, follow=by_hand)
+        live = LiveTexture(self.note, self.skin(), w, h, dpr)
+        self.actor = PeelActor(self.global_paper(), grab_global, live.front(), live.back, dpr, h * GLUE / TEMPLATE,
+                               on_landed=self._landed, on_returned=self._returned, follow=by_hand, live=live)
         self.peeling = True
         self.editor.hide()
         self.app.stages.at(grab_global, follow=True).add(self.actor)
@@ -262,7 +293,7 @@ class Pad(Paper):
             self.app.set_note_size(self.app.store.data.get("note_size", WIDTH) + step)
 
     def moveEvent(self, event):
-        if not self.actor:
+        if not self.actor and self.following is None:
             QTimer.singleShot(0, self._save_pos)
 
     def _save_pos(self) -> None:

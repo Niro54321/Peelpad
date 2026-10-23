@@ -147,6 +147,18 @@ class Skin:
         p.fillRect(QRectF(0, 0, w, h), _grain())
 
 
+BACK_PAPER = QColor(244, 240, 231, 228)
+
+
+def cover_with_paper(p: QPainter, w: float, h: float) -> None:
+    """The back of a printed sheet is plain paper: cover what was just drawn (keeping
+    its shape) with paper, so only a hint of the print shows through."""
+    p.save()
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
+    p.fillRect(QRectF(0, 0, w, h), BACK_PAPER)
+    p.restore()
+
+
 class ColorSkin(Skin):
     """One paper colour and one ink: a theme, or the colours you picked."""
 
@@ -201,9 +213,7 @@ class PictureSkin(Skin):
 
     def paint_back(self, p: QPainter, w: float, h: float, color: int) -> None:
         p.drawImage(QRectF(0, 0, w, h), self.image)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceAtop)
-        p.fillRect(QRectF(0, 0, w, h), QColor(255, 255, 255, 150))
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        cover_with_paper(p, w, h)
 
 
 def detect_area(image: QImage) -> tuple:
@@ -300,6 +310,9 @@ def all_skins(folder: Path, mine: dict | None = None) -> list[Skin]:
     skins += [ColorSkin(*t) for t in THEMES]
     skins.append(mine_skin(mine or {}))
     skins += [SkullParade(), AppleWorm()]
+    from peelpad.scenes import SCENES
+
+    skins += [cls() for cls in SCENES]
     for f in picture_files(folder):
         try:
             skins.append(picture_skin(f))
@@ -326,6 +339,10 @@ def _skin_for(key: str, folder: Path, mine: dict | None = None) -> Skin:
         return next((ColorSkin(*t) for t in THEMES if t[0] == key), Skin())
     if key == "mine":
         return mine_skin(mine or {})
+    from peelpad.scenes import BY_KEY
+
+    if key in BY_KEY:
+        return BY_KEY[key]()
     if key in ("anim:skulls", "anim:worm"):
         from peelpad.animated import AppleWorm, SkullParade
 
@@ -574,6 +591,34 @@ def writing_layer(note: dict, skin: Skin, w: int, h: int, dpr: float = 1.0) -> Q
     paint_writing(p, note, skin, w, h, dpr)
     p.end()
     return img
+
+
+class LiveTexture:
+    """A note as a picture that keeps up with an animated skin while it is being
+    peeled or carried: the writing is drawn once, the paper again for every new frame."""
+
+    def __init__(self, note: dict, skin: Skin, w: int, h: int, dpr: float = 1.0):
+        self.skin, self.w, self.h, self.dpr = skin, w, h, dpr
+        self.color = note.get("color", 0)
+        self._front, self.back = note_images(note, skin, w, h, dpr)
+        self._frame = skin.frame_id()
+        self.writing = writing_layer(note, skin, w, h, dpr) if skin.animated else None
+
+    def front(self) -> QImage:
+        if not self.skin.animated or self.skin.frame_id() == self._frame:
+            return self._front
+        img = QImage(self._front.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(Qt.GlobalColor.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.scale(self.dpr, self.dpr)
+        self.skin.paint_front(p, self.w, self.h, self.color)
+        p.resetTransform()
+        p.drawImage(0, 0, self.writing)
+        p.end()
+        self._front, self._frame = img, self.skin.frame_id()
+        return img
 
 
 def note_images(note: dict, skin: Skin, w: int, h: int, dpr: float = 1.0) -> tuple[QImage, QImage]:

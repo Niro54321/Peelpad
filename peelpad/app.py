@@ -80,6 +80,9 @@ class App(QObject):
             d["effect"] = {"on": "neon", "off": "solid"}.get(d.pop("glow", "auto"), "auto")
         skins.WRITING.effect = d["effect"]
         skins.WRITING.family = d.get("font", "")
+        from peelpad.scenes import LED
+
+        LED.color = QColor(d.get("clock_color", "#FF2B2B"))
         skins.WRITING.scale = float(d.get("text_scale", 1.0))
 
     def restyle_all(self) -> None:
@@ -166,6 +169,24 @@ class App(QObject):
         if self.settings:
             self.settings.fill_skins()
 
+    def delete_skins(self, keys: list[str]) -> None:
+        """Delete pictures you uploaded (never Peelpad's own looks)."""
+        for key in keys:
+            if not key.startswith("custom:"):
+                continue
+            try:
+                (self.skins_dir / key[7:]).unlink()
+            except OSError:
+                pass
+            self.store.data["areas"].pop(key, None)
+            if key[7:] in self.store.data["checked_skins"]:
+                self.store.data["checked_skins"].remove(key[7:])
+        if self.store.data["skin"] in keys:
+            self.set_skin("neon")
+        elif self.settings:
+            self.settings.fill_skins()
+        self.changed()
+
     def set_mine(self, **changes) -> None:
         """Your own paper and ink colours (and glow), worn at once."""
         self.store.data["mine"].update(changes)
@@ -180,6 +201,13 @@ class App(QObject):
         if key == self.skin.key:
             self.set_skin(key)
         self.changed()
+
+    def set_clock_color(self, color: str) -> None:
+        self.store.data["clock_color"] = color
+        self.restyle_all()
+        self.pad.update()
+        if self.settings:
+            self.settings.fill_clock()
 
     def wind_speed(self) -> float:
         """How hard the wind blows on pinned notes, m/s (0 when it's off)."""
